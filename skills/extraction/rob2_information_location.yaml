@@ -1,0 +1,112 @@
+skill_id: "extraction.rob2_information_location"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "methodological"
+evidence_base: "Sterne et al. 2019 (BMJ); Cochrane RoB 2 guidance document v2019-09"
+description: "Information location guide for RoB 2 assessment: specifies where to look in the paper for each domain's signal questions."
+trigger:
+  stage: "extraction"
+  step: "extraction_step_5_rob"
+  disclosure_level: "L3_reference"
+
+required_context:
+  - context_key: "full_text_sections"
+    source: "stage_output"
+    description: "Parsed document sections"
+
+decision_protocol:
+  type: checklist
+  token_budget: 600
+  content:
+    instruction: "For each RoB 2 domain, check the specified document locations in priority order."
+    items:
+      - check_id: "D1_location"
+        question: "D1 — Randomization information"
+        primary_locations:
+          - "Methods > Randomization / Allocation"
+          - "Methods > Study Design"
+        secondary_locations:
+          - "Table 1 (baseline characteristics)"
+          - "CONSORT flow diagram"
+          - "Trial registration record"
+        key_terms: ["randomiz", "random allocation", "computer-generated", "block random", "stratified", "minimization", "concealment", "sealed envelope", "central allocation"]
+
+      - check_id: "D2_location"
+        question: "D2 — Blinding / deviations information"
+        primary_locations:
+          - "Methods > Blinding / Masking"
+          - "Methods > Intervention"
+        secondary_locations:
+          - "Results > Deviations / Protocol violations"
+          - "Supplementary protocol"
+        key_terms: ["blind", "mask", "open-label", "double-blind", "placebo", "sham", "crossover", "ITT", "per-protocol", "deviation"]
+
+      - check_id: "D3_location"
+        question: "D3 — Missing data / attrition information"
+        primary_locations:
+          - "CONSORT flow diagram"
+          - "Results > Participants / Attrition"
+        secondary_locations:
+          - "Methods > Statistical Analysis"
+          - "Supplementary appendix"
+        key_terms: ["lost to follow-up", "withdrew", "dropout", "missing", "imputation", "LOCF", "BOCF", "complete case", "available case", "MCAR", "MAR"]
+
+      - check_id: "D4_location"
+        question: "D4 — Outcome measurement information"
+        primary_locations:
+          - "Methods > Outcome Measures"
+          - "Methods > Assessors"
+        secondary_locations:
+          - "Supplementary methods"
+          - "Trial registration / Protocol"
+        key_terms: ["assessor", "blinded outcome", "objective measure", "self-report", "patient-reported", "adjudicat", "validated scale", "primary outcome"]
+
+      - check_id: "D5_location"
+        question: "D5 — Reporting bias information"
+        primary_locations:
+          - "Trial registration record (ClinicalTrials.gov, ISRCTN, etc.)"
+          - "Published protocol paper"
+        secondary_locations:
+          - "Methods > Statistical Analysis (pre-specified)"
+          - "Discussion (outcomes not reported)"
+        key_terms: ["pre-specified", "protocol", "registration", "ClinicalTrials", "ISRCTN", "primary outcome changed", "multiplicity"]
+
+    aggregation: "use_locations_in_priority_order; NI if not found anywhere"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      domain_information_sources:
+        type: object
+        description: "Per-domain: list of found sections and their content excerpts"
+  example:
+    domain_information_sources:
+      D1:
+        found_sections: ["Methods_Randomization"]
+        key_quotes: ["Participants were randomly assigned using a computer-generated list"]
+      D2:
+        found_sections: ["Methods_Blinding", "Results_Attrition"]
+        key_quotes: ["Open-label design; participants and assessors aware of allocation"]
+
+validation:
+  - rule_id: "five_domains_covered"
+    description: "Information search must cover all five domains"
+    expression: "all(d in output.get('domain_information_sources', {}) for d in ['D1','D2','D3','D4','D5'])"
+    severity: soft
+    on_fail: flag_human
+
+bound_tools:
+  - tool_id: "semantic_locator"
+    usage: "Find relevant passages using domain-specific key terms"
+    required: true
+
+manifest:
+  purpose: "Locate and retrieve information needed for each RoB 2 domain from the paper"
+  key_constraints:
+    - "Check Methods first, then Results, then supplementary materials"
+    - "Search trial registration for D5 (reporting bias)"
+    - "Record NI (no information) if information genuinely not found"
+    - "Provide exact text quotes for each domain"
+  output_type: "JSON domain→sections+quotes mapping for use in RoB 2 assessment"

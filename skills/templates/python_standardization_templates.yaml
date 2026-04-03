@@ -1,0 +1,96 @@
+skill_id: "templates.python_standardization_templates"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "template"
+evidence_base: "Cochrane Handbook v6.4 §6.5; Wan et al. 2014"
+description: "Python code templates for data standardization calculations, safe to run in PythonSandboxTool."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_4_validate"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: template
+  token_budget: 400
+  content:
+    instruction: "Select the appropriate template and pass input variables to PythonSandboxTool."
+    template_sections:
+      - section: "Template: SE → SD"
+        code: |
+          # Input: se (float), n (int)
+          sd = se * sqrt(n)
+        input_vars: {se: "float", n: "int"}
+        output_var: "sd"
+
+      - section: "Template: 95% CI → SD"
+        code: |
+          # Input: ci_lower (float), ci_upper (float), n (int)
+          sd = (ci_upper - ci_lower) / (2 * 1.96) * sqrt(n)
+        input_vars: {ci_lower: "float", ci_upper: "float", n: "int"}
+        output_var: "sd"
+
+      - section: "Template: Wan 2014 Method 1 (median/IQR/range → mean/SD)"
+        code: |
+          # Input: x_min, q1, median, q3, x_max (floats), n (int)
+          mean = (x_min + 2*q1 + 2*median + 2*q3 + x_max) / 8
+          if n >= 15:
+              sd = (x_max - x_min) / 4
+          else:
+              sd = (x_max - x_min) / (2 * sqrt(n))
+        input_vars: {x_min: "float", q1: "float", median: "float", q3: "float", x_max: "float", n: "int"}
+        output_vars: ["mean", "sd"]
+
+      - section: "Template: Wan 2014 Method 2 (median/IQR only → mean/SD)"
+        code: |
+          # Input: q1, median, q3 (floats), n (int)
+          mean = (q1 + median + q3) / 3
+          sd = (q3 - q1) / 1.35
+        input_vars: {q1: "float", median: "float", q3: "float", n: "int"}
+        output_vars: ["mean", "sd"]
+
+      - section: "Template: HR + 95% CI → log(HR) + SE"
+        code: |
+          # Input: hr (float), ci_lower (float), ci_upper (float)
+          log_hr = log(hr)
+          se_log_hr = (log(ci_upper) - log(ci_lower)) / (2 * 1.96)
+        input_vars: {hr: "float", ci_lower: "float", ci_upper: "float"}
+        output_vars: ["log_hr", "se_log_hr"]
+
+      - section: "Template: Percentage → Event Count"
+        code: |
+          # Input: pct (float, e.g. 42.5 for 42.5%), n (int)
+          events = round(pct / 100 * n)
+        input_vars: {pct: "float", n: "int"}
+        output_var: "events"
+
+      - section: "Template: NNT from RD"
+        code: |
+          # Input: rd (float, absolute risk difference), rd_ci_lower, rd_ci_upper
+          nnt = round(1 / abs(rd)) if rd != 0 else None
+          nnt_ci_lower = round(1 / abs(rd_ci_upper)) if rd_ci_upper != 0 else None
+          nnt_ci_upper = round(1 / abs(rd_ci_lower)) if rd_ci_lower != 0 else None
+        input_vars: {rd: "float", rd_ci_lower: "float", rd_ci_upper: "float"}
+        output_vars: ["nnt", "nnt_ci_lower", "nnt_ci_upper"]
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      code: {type: string}
+      input_vars: {type: object}
+      output_vars: {type: array}
+
+validation: []
+
+manifest:
+  purpose: "Python code templates for SE→SD, CI→SD, Wan 2014, HR→log(HR), NNT calculations"
+  key_constraints:
+    - "All templates safe for PythonSandboxTool (no imports needed except math built-ins)"
+    - "Wan Method 1: requires min/Q1/median/Q3/max AND n≥15 for reliable SD estimate"
+    - "Wan Method 2: use when range not available"
+    - "NNT = 1/|RD|; returns None if RD=0"
+  output_type: "L3 reference; Python code templates for numeric standardization"

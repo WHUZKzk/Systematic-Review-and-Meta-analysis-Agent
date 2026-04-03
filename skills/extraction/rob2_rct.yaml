@@ -1,0 +1,194 @@
+skill_id: "extraction.rob2_rct"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "methodological"
+evidence_base: "Sterne et al. 2019 (BMJ); Cochrane RoB 2 tool v2019-09"
+description: "Assess risk of bias for RCTs using the Cochrane RoB 2 tool: five domains, signal questions, domain-level judgments, and overall judgment."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_5_rob"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "full_text"
+    source: "stage_output"
+    description: "Full text of the RCT"
+  - context_key: "document_map.arms"
+    source: "skill_output"
+    description: "Study arms for assignment assessment"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 900
+  content:
+    entry_point: "assess_domain_1"
+    domains:
+      - domain_id: "D1"
+        name: "Bias arising from the randomization process"
+        signal_questions:
+          - sq: "1.1"
+            question: "Was the allocation sequence random?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+          - sq: "1.2"
+            question: "Was the allocation sequence concealed until participants were enrolled and assigned to interventions?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+          - sq: "1.3"
+            question: "Did baseline differences between intervention groups suggest a problem with the randomization process?"
+            options: ["Y", "PY", "N", "PN", "NI"]
+        domain_algorithm:
+          low_risk: "1.1=Y or PY AND 1.2=Y or PY AND 1.3=N or PN"
+          high_risk: "1.1=N or PN OR 1.2=N or PN OR 1.3=Y or PY"
+          some_concerns: "otherwise"
+
+      - domain_id: "D2"
+        name: "Bias due to deviations from intended interventions"
+        signal_questions:
+          - sq: "2.1"
+            question: "Were participants aware of their assigned intervention during the trial?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+          - sq: "2.2"
+            question: "Were carers and people delivering the interventions aware of participants' assigned intervention?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+          - sq: "2.3"
+            question: "If Y/PY to 2.1 or 2.2: Were there deviations from the intended intervention that arose because of the trial context?"
+            options: ["Y", "PY", "PN", "N", "NA", "NI"]
+          - sq: "2.5"
+            question: "Were these deviations likely to have affected the outcome?"
+            options: ["Y", "PY", "PN", "N", "NA", "NI"]
+          - sq: "2.6"
+            question: "Was an appropriate analysis used to estimate the effect of assignment to intervention?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+        domain_algorithm:
+          low_risk: "2.3=N or PN or NA AND 2.6=Y or PY"
+          high_risk: "(2.3=Y or PY AND 2.5=Y or PY) OR 2.6=N or PN"
+          some_concerns: "otherwise"
+
+      - domain_id: "D3"
+        name: "Bias due to missing outcome data"
+        signal_questions:
+          - sq: "3.1"
+            question: "Were data for this outcome available for all, or nearly all, participants randomized?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+          - sq: "3.2"
+            question: "If N/PN: Is there evidence that the result was not biased by missing outcome data?"
+            options: ["Y", "PY", "PN", "N", "NA", "NI"]
+          - sq: "3.3"
+            question: "If N/PN to 3.2: Could missingness in the outcome depend on its true value?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+        domain_algorithm:
+          low_risk: "3.1=Y or PY OR 3.2=Y or PY"
+          high_risk: "3.3=Y or PY"
+          some_concerns: "otherwise"
+
+      - domain_id: "D4"
+        name: "Bias in measurement of the outcome"
+        signal_questions:
+          - sq: "4.1"
+            question: "Was the method of measuring the outcome inappropriate?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+          - sq: "4.2"
+            question: "Could measurement or ascertainment of the outcome have differed between intervention groups?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+          - sq: "4.3"
+            question: "Were outcome assessors aware of the intervention received by study participants?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+          - sq: "4.4"
+            question: "If Y/PY to 4.3: Could assessment of the outcome have been influenced by knowledge of intervention received?"
+            options: ["Y", "PY", "PN", "N", "NA", "NI"]
+        domain_algorithm:
+          low_risk: "4.1=N or PN AND 4.2=N or PN AND (4.3=N or PN OR 4.4=N or PN)"
+          high_risk: "4.1=Y or PY OR 4.2=Y or PY OR 4.4=Y or PY"
+          some_concerns: "otherwise"
+
+      - domain_id: "D5"
+        name: "Bias in selection of the reported result"
+        signal_questions:
+          - sq: "5.1"
+            question: "Were the trial outcomes pre-specified in a protocol?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+          - sq: "5.2"
+            question: "Was the result likely selected from multiple eligible outcome measurements or analyses?"
+            options: ["Y", "PY", "PN", "N", "NI"]
+        domain_algorithm:
+          low_risk: "5.1=Y or PY AND 5.2=N or PN"
+          high_risk: "5.2=Y or PY"
+          some_concerns: "5.1=N or PN or NI AND 5.2=NI"
+
+    overall_judgment_algorithm:
+      low_risk: "All domains low_risk"
+      high_risk: "≥1 domain high_risk OR ≥3 domains some_concerns"
+      some_concerns: "otherwise"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["pmid", "domain_assessments", "overall_judgment"]
+    properties:
+      pmid: {type: string}
+      domain_assessments:
+        type: array
+        items:
+          domain_id: {type: string}
+          domain_name: {type: string}
+          signal_question_responses: {type: object}
+          domain_judgment: {type: string, enum: ["low_risk", "some_concerns", "high_risk"]}
+          supporting_quotes: {type: array, items: {type: string}}
+          domain_reasoning: {type: string}
+      overall_judgment:
+        type: string
+        enum: ["low_risk", "some_concerns", "high_risk"]
+      overall_reasoning: {type: string}
+  example:
+    pmid: "12345678"
+    domain_assessments:
+      - domain_id: "D1"
+        domain_name: "Bias arising from the randomization process"
+        signal_question_responses:
+          "1.1": "Y"
+          "1.2": "Y"
+          "1.3": "N"
+        domain_judgment: "low_risk"
+        supporting_quotes: ["Participants were randomized using computer-generated random numbers"]
+        domain_reasoning: "Adequate sequence generation and concealment; no baseline imbalance"
+    overall_judgment: "some_concerns"
+    overall_reasoning: "Low risk on D1, D3, D4; some concerns on D2 and D5 due to open-label design"
+
+validation:
+  - rule_id: "all_five_domains_assessed"
+    description: "All five RoB 2 domains must be assessed"
+    expression: "len(output.get('domain_assessments', [])) == 5"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "valid_domain_judgments"
+    description: "Domain judgments must be valid enum values"
+    expression: "all(d.get('domain_judgment') in ['low_risk','some_concerns','high_risk'] for d in output.get('domain_assessments',[]))"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "supporting_quotes_required"
+    description: "Each domain should have at least one supporting quote or NI notation"
+    expression: "all(len(d.get('supporting_quotes',[])) >= 1 or 'NI' in str(d.get('signal_question_responses',{})) for d in output.get('domain_assessments',[]))"
+    severity: soft
+    on_fail: flag_human
+
+bound_tools:
+  - tool_id: "semantic_locator"
+    usage: "Locate randomization, blinding, and outcome reporting sections"
+    required: true
+
+domain_references:
+  - ref_skill_id: "extraction.rob2_information_location"
+    entry_key: "domain_information_sources"
+    injection_point: "decision_protocol"
+
+manifest:
+  purpose: "Assess RCT risk of bias using Cochrane RoB 2 tool across five domains"
+  key_constraints:
+    - "Answer all signal questions with Y/PY/PN/N/NI/NA codes"
+    - "Apply domain-level algorithms to reach low_risk/some_concerns/high_risk"
+    - "Provide supporting quotes from the text for each assessment"
+    - "Apply overall judgment algorithm strictly"
+  output_type: "JSON RoB 2 assessment with domain judgments, quotes, and overall judgment"

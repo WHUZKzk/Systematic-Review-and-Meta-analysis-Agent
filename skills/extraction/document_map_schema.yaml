@@ -1,0 +1,152 @@
+skill_id: "extraction.document_map_schema"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.5; CONSORT 2010"
+description: "Build a structured document map from full-text identifying all study arms, endpoints, and timepoints before numeric extraction."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_3_extract"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "full_text"
+    source: "stage_output"
+    description: "Full text of the included study (PMC XML or parsed PDF)"
+  - context_key: "review_question.pico"
+    source: "human_input"
+    description: "PICO review question defining outcomes of interest"
+
+decision_protocol:
+  type: schema
+  token_budget: 800
+  content:
+    instruction: >
+      Scan the full text and build a comprehensive document map.
+      Identify ALL study arms, primary and secondary endpoints, and all reported timepoints.
+      This map guides all subsequent numeric extraction steps.
+    schema_definition:
+      study_type:
+        type: string
+        required: true
+        enum: ["RCT", "quasi-RCT", "cohort", "cross-over", "other"]
+        locate_in: "Methods/Study Design"
+      arms:
+        type: array
+        required: true
+        items:
+          arm_id: {type: string, description: "e.g. 'intervention', 'control', 'placebo'"}
+          label: {type: string, description: "Exact label used in paper"}
+          n_randomized: {type: integer}
+          n_analyzed: {type: integer}
+          intervention_description: {type: string}
+        locate_in: "Methods/Participants, Table 1, CONSORT diagram"
+      endpoints:
+        type: array
+        required: true
+        items:
+          endpoint_id: {type: string, description: "e.g. 'primary_1', 'secondary_1'"}
+          name: {type: string, description: "Exact endpoint name as stated"}
+          priority: {type: string, enum: ["primary", "secondary", "exploratory"]}
+          outcome_type: {type: string, enum: ["continuous", "binary", "time_to_event", "rate", "ordinal"]}
+          unit: {type: string, description: "Measurement unit or scale"}
+          direction_of_benefit: {type: string, enum: ["higher_better", "lower_better", "unclear"]}
+        locate_in: "Methods/Outcomes, Abstract"
+      timepoints:
+        type: array
+        required: true
+        items:
+          timepoint_id: {type: string, description: "e.g. 'T0', 'T12w', 'T24w'"}
+          label: {type: string, description: "Exact label, e.g. '12 weeks'"}
+          weeks_from_baseline: {type: number, description: "Standardized to weeks; null if unclear"}
+        locate_in: "Methods/Follow-up, Results tables"
+      follow_up_completeness:
+        type: object
+        properties:
+          reported: {type: boolean}
+          loss_to_follow_up_pct: {type: number, description: "%, null if not reported"}
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["study_type", "arms", "endpoints", "timepoints"]
+    properties:
+      pmid: {type: string}
+      study_type: {type: string}
+      arms: {type: array}
+      endpoints: {type: array}
+      timepoints: {type: array}
+      follow_up_completeness: {type: object}
+      document_map_notes: {type: string, description: "Any ambiguities or special cases noted"}
+  example:
+    pmid: "12345678"
+    study_type: "RCT"
+    arms:
+      - arm_id: "intervention"
+        label: "Exercise group"
+        n_randomized: 52
+        n_analyzed: 48
+        intervention_description: "Supervised aerobic exercise 3x/week for 12 weeks"
+      - arm_id: "control"
+        label: "Usual care"
+        n_randomized: 50
+        n_analyzed: 47
+        intervention_description: "Standard care only"
+    endpoints:
+      - endpoint_id: "primary_1"
+        name: "Systolic blood pressure"
+        priority: "primary"
+        outcome_type: "continuous"
+        unit: "mmHg"
+        direction_of_benefit: "lower_better"
+    timepoints:
+      - timepoint_id: "T0"
+        label: "Baseline"
+        weeks_from_baseline: 0
+      - timepoint_id: "T12w"
+        label: "12 weeks"
+        weeks_from_baseline: 12
+
+validation:
+  - rule_id: "arms_min_two"
+    description: "At least two arms required"
+    expression: "len(output.get('arms', [])) >= 2"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "endpoints_present"
+    description: "At least one endpoint must be identified"
+    expression: "len(output.get('endpoints', [])) >= 1"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "timepoints_present"
+    description: "At least one timepoint must be identified"
+    expression: "len(output.get('timepoints', [])) >= 1"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "arm_ids_unique"
+    description: "All arm_ids must be unique"
+    expression: "len(set(a['arm_id'] for a in output.get('arms', []))) == len(output.get('arms', []))"
+    severity: hard
+    on_fail: retry
+
+bound_tools:
+  - tool_id: "fulltext_fetcher"
+    usage: "Retrieve full text XML/PDF before mapping"
+    required: true
+  - tool_id: "semantic_locator"
+    usage: "Locate CONSORT diagram and Methods sections"
+    required: false
+
+manifest:
+  purpose: "Build a structured map of study arms, endpoints, and timepoints from full text"
+  key_constraints:
+    - "Identify ALL arms including sub-groups if reported"
+    - "Classify each endpoint as primary/secondary/exploratory"
+    - "Standardize all timepoints to weeks from baseline"
+    - "Record exact labels used in paper (do not paraphrase)"
+  output_type: "JSON document map with arms, endpoints, timepoints arrays"

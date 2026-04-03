@@ -1,0 +1,97 @@
+skill_id: "templates.r_output_and_forest"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "template"
+evidence_base: "Schwarzer et al. R package 'meta' v6; Lewis & Clarke 2001 BMJ"
+description: "Unified R code for extracting meta-analysis results, generating forest plots, subgroup analyses, and sensitivity analyses."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_3_meta"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: template
+  token_budget: 500
+  content:
+    instruction: "Append this code to any metabin/metacont/metagen analysis to extract results and generate plots."
+    template_sections:
+      - section: "Result Extraction"
+        r_code: |
+          # ── Extract Results ───────────────────────────────────
+          results <- list(
+            pooled_estimate = exp(m$TE.random),          # back-transform if log-scale
+            ci_lower        = exp(m$lower.random),
+            ci_upper        = exp(m$upper.random),
+            prediction_lower = exp(m$lower.predict),
+            prediction_upper = exp(m$upper.predict),
+            i2              = m$I2,
+            tau2            = m$tau2,
+            q_statistic     = m$Q,
+            q_df            = m$df.Q,
+            q_p_value       = m$pval.Q,
+            k               = m$k,
+            n_total         = sum(m$n.e, m$n.c, na.rm=TRUE)
+          )
+          print(results)
+
+      - section: "Subgroup Analysis"
+        r_code: |
+          # ── Subgroup Analysis (add subgroup variable to dat first) ──
+          # dat$subgroup <- c({{SUBGROUP_VALUES}})
+
+          # m_sub <- update(m,
+          #   subgroup = dat$subgroup,
+          #   print.subgroup.name = TRUE
+          # )
+          # summary(m_sub)
+          # forest(m_sub, file = "{{OUTPUT_FILE_PREFIX}}_subgroup.pdf")
+
+      - section: "Sensitivity Analysis — Exclude High RoB"
+        r_code: |
+          # ── Sensitivity: Exclude High Risk of Bias Studies ────
+          # high_rob_studies <- c({{HIGH_ROB_STUDY_LABELS}})
+          # m_sens <- update(m,
+          #   subset = !studlab %in% high_rob_studies
+          # )
+          # summary(m_sens)
+          # cat("Sensitivity (low/some concerns only):\n")
+          # cat("Pooled:", exp(m_sens$TE.random),
+          #     "95% CI:", exp(m_sens$lower.random), "-", exp(m_sens$upper.random), "\n")
+
+      - section: "Trim-and-Fill for Publication Bias"
+        r_code: |
+          # ── Trim-and-Fill ─────────────────────────────────────
+          if (m$k >= 10) {
+            m_tf <- trimfill(m)
+            summary(m_tf)
+            funnel(m_tf, main = "Trim-and-Fill Funnel Plot")
+            cat("Studies added by trim-and-fill:", m_tf$k0, "\n")
+            cat("Adjusted estimate:", exp(m_tf$TE.random), "\n")
+          }
+
+      - section: "Save Results to JSON"
+        r_code: |
+          # ── Save ──────────────────────────────────────────────
+          library(jsonlite)
+          write_json(results, "{{OUTPUT_FILE_PREFIX}}_results.json", pretty=TRUE)
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      r_code: {type: string}
+
+validation: []
+
+manifest:
+  purpose: "Unified R code for result extraction, forest plots, subgroup/sensitivity analyses, trim-and-fill"
+  key_constraints:
+    - "Back-transform log-scale estimates with exp() before reporting"
+    - "Trim-and-fill only runs if k≥10"
+    - "Save results as JSON for Python pipeline consumption"
+    - "Subgroup analysis uses update(m, subgroup=...)"
+  output_type: "L3 reference; R code blocks for post-analysis output and plots"

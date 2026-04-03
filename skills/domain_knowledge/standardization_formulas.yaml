@@ -1,0 +1,117 @@
+skill_id: "domain_knowledge.standardization_formulas"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "domain_knowledge"
+evidence_base: "Cochrane Handbook v6.4 §6.5; Wan et al. 2014 BMC Med Res Methodol; Luo et al. 2018"
+description: "Reference formulas for data standardization: SE→SD, CI→SD, median/IQR→mean/SD, log HR/SE, event rate calculations."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_4_validate"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: schema
+  token_budget: 500
+  content:
+    instruction: "Look up the appropriate standardization formula for the data form available."
+    schema_definition:
+      formulas:
+        se_to_sd:
+          name: "Standard Error to Standard Deviation"
+          formula: "SD = SE × sqrt(n)"
+          python_code: "sd = se * sqrt(n)"
+          conditions: "Use when only SE reported alongside mean"
+          reference: "Basic statistics identity"
+
+        ci95_to_sd:
+          name: "95% Confidence Interval to Standard Deviation"
+          formula: "SD = (CI_upper - CI_lower) / (2 × 1.96) × sqrt(n)"
+          python_code: "sd = (ci_upper - ci_lower) / (2 * 1.96) * sqrt(n)"
+          conditions: "Use when 95% CI reported; assumes normal distribution"
+          reference: "Cochrane Handbook §6.5.2"
+
+        ci90_to_sd:
+          name: "90% CI to SD"
+          formula: "SD = (CI_upper - CI_lower) / (2 × 1.645) × sqrt(n)"
+          python_code: "sd = (ci_upper - ci_lower) / (2 * 1.645) * sqrt(n)"
+
+        ci99_to_sd:
+          name: "99% CI to SD"
+          formula: "SD = (CI_upper - CI_lower) / (2 × 2.576) × sqrt(n)"
+          python_code: "sd = (ci_upper - ci_lower) / (2 * 2.576) * sqrt(n)"
+
+        wan_2014_method1:
+          name: "Median/IQR to Mean/SD (Wan et al. 2014, Method 1 — range known)"
+          formula: >
+            mean ≈ (min + 2×Q1 + 2×median + 2×Q3 + max) / 8
+            sd ≈ (max - min) / 4  [for n≥15]
+          python_code: |
+            mean = (x_min + 2*q1 + 2*median + 2*q3 + x_max) / 8
+            sd = (x_max - x_min) / 4  # valid for n >= 15
+          conditions: "Use when min, Q1, median, Q3, max all available; n≥15"
+          reference: "Wan et al. (2014) BMC Med Res Methodol doi:10.1186/1471-2288-14-135"
+
+        wan_2014_method2:
+          name: "Median/IQR to Mean/SD (Wan et al. 2014, Method 2 — range not known)"
+          formula: >
+            mean ≈ (Q1 + median + Q3) / 3
+            sd ≈ (Q3 - Q1) / 1.35
+          python_code: |
+            mean = (q1 + median + q3) / 3
+            sd = (q3 - q1) / 1.35
+          conditions: "Use when only Q1, median, Q3 available (range unknown)"
+          reference: "Wan et al. (2014)"
+
+        log_hr_se:
+          name: "HR and 95% CI to log(HR) and SE"
+          formula: >
+            log_hr = ln(HR)
+            se_log_hr = (ln(CI_upper) - ln(CI_lower)) / (2 × 1.96)
+          python_code: |
+            import math
+            log_hr = math.log(hr)
+            se_log_hr = (math.log(ci_upper) - math.log(ci_lower)) / (2 * 1.96)
+          conditions: "Required for metagen() input when only HR+CI available"
+          reference: "Parmar et al. 1998; Cochrane Handbook §10.4"
+
+        pct_to_count:
+          name: "Percentage to Event Count"
+          formula: "events = round(pct / 100 × n)"
+          python_code: "events = round(pct / 100 * n)"
+          conditions: "Use when only percentage reported; round to nearest integer"
+
+        rate_to_irr:
+          name: "Incidence Rate to log(IRR) and SE"
+          formula: >
+            log_irr = ln(events_int / time_int) - ln(events_ctrl / time_ctrl)
+            se_log_irr = sqrt(1/events_int + 1/events_ctrl)
+          python_code: |
+            import math
+            log_irr = math.log(events_int / time_int) - math.log(events_ctrl / time_ctrl)
+            se_log_irr = math.sqrt(1/events_int + 1/events_ctrl)
+
+        wan_2014_method:
+          description: "Alias pointing to wan_2014_method1 and wan_2014_method2 above"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      formula_lookup:
+        type: object
+        description: "Retrieved formula entry"
+
+validation: []
+
+manifest:
+  purpose: "Reference formulas for SE→SD, CI→SD, median/IQR→mean/SD, log HR/SE conversions"
+  key_constraints:
+    - "Wan et al. (2014) Method 1 requires min/Q1/median/Q3/max AND n≥15"
+    - "Use Method 2 when range unknown: mean=(Q1+median+Q3)/3; SD=(Q3-Q1)/1.35"
+    - "log(HR) = ln(HR); SE = (ln(CI_upper)-ln(CI_lower))/(2×1.96)"
+    - "All python_code blocks are safe to run in PythonSandboxTool"
+  output_type: "L3 reference; loaded on-demand during data standardization"

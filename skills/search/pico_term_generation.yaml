@@ -1,0 +1,166 @@
+# ============================================================
+# Skill: search.pico_term_generation  (A2.1)
+# ============================================================
+
+skill_id: "search.pico_term_generation"
+version: "1.0.0"
+domain: "search"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4, Ch.4.4.1"
+description: "从研究问题中系统生成PICO四维度检索术语表，包括核心概念词、同义词、缩写词和MeSH候选词。"
+
+trigger:
+  stage: "search"
+  step: "search_step_1"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "review_question"
+    source: "human_input"
+    description: "结构化PICO研究问题，包含Population/Intervention/Comparison/Outcome的自然语言描述"
+
+decision_protocol:
+  type: template
+  token_budget: 800
+  content:
+    instruction: |
+      你是系统综述检索专家。根据以下研究问题，为每个PICO维度生成全面的检索术语。
+      严格按照下面的四步模板执行，不要跳过任何维度。
+    template_sections:
+      - section: "Population (P)"
+        prompt: "识别目标人群的核心概念，生成：(1)核心术语（最精确的描述词）(2)同义词和近义词（含不同表述方式）(3)常用缩写 (4)可能对应的MeSH候选词（先列举，后续步骤验证）"
+        constraints:
+          - "至少3个核心术语或同义词"
+          - "包含人群的关键特征词（年龄/疾病/状态等）"
+          - "MeSH候选词标注[MeSH候选]，不代表已验证"
+        output_fields: ["core_terms", "synonyms", "abbreviations", "mesh_candidates"]
+
+      - section: "Intervention (I)"
+        prompt: "识别干预措施，生成：(1)干预类型的核心术语 (2)技术/产品名称同义词 (3)实施方式相关词 (4)MeSH候选词"
+        constraints:
+          - "至少3个描述干预的术语"
+          - "包含技术/工具/方法的不同表述"
+          - "如为数字健康干预，包含app/mobile/smartphone/mHealth等变体"
+        output_fields: ["core_terms", "synonyms", "abbreviations", "mesh_candidates"]
+
+      - section: "Comparison (C)"
+        prompt: "识别对照措施（如有），生成相关术语。若研究问题未明确对照，填写通用对照词（usual care/control/placebo等）"
+        constraints:
+          - "明确说明是否有特定对照"
+          - "如无特定对照则填写通用词"
+        output_fields: ["core_terms", "synonyms", "abbreviations", "mesh_candidates"]
+
+      - section: "Outcome (O)"
+        prompt: "识别结局指标，生成：(1)主要结局的标准术语 (2)测量工具/量表名称 (3)结局的不同表述方式 (4)MeSH候选词"
+        constraints:
+          - "区分主要结局和次要结局"
+          - "包含结局的测量方式描述词"
+        output_fields: ["core_terms", "synonyms", "abbreviations", "mesh_candidates"]
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["pico_terms"]
+    properties:
+      pico_terms:
+        type: object
+        required: ["population", "intervention", "comparison", "outcome"]
+        properties:
+          population:
+            type: object
+            required: ["core_terms", "synonyms", "mesh_candidates"]
+            properties:
+              core_terms:   {type: array, items: {type: string}}
+              synonyms:     {type: array, items: {type: string}}
+              abbreviations: {type: array, items: {type: string}}
+              mesh_candidates: {type: array, items: {type: string}}
+          intervention:
+            type: object
+            required: ["core_terms", "synonyms", "mesh_candidates"]
+            properties:
+              core_terms:   {type: array, items: {type: string}}
+              synonyms:     {type: array, items: {type: string}}
+              abbreviations: {type: array, items: {type: string}}
+              mesh_candidates: {type: array, items: {type: string}}
+          comparison:
+            type: object
+            properties:
+              core_terms:   {type: array, items: {type: string}}
+              synonyms:     {type: array, items: {type: string}}
+              mesh_candidates: {type: array, items: {type: string}}
+          outcome:
+            type: object
+            required: ["core_terms", "synonyms", "mesh_candidates"]
+            properties:
+              core_terms:   {type: array, items: {type: string}}
+              synonyms:     {type: array, items: {type: string}}
+              abbreviations: {type: array, items: {type: string}}
+              mesh_candidates: {type: array, items: {type: string}}
+  example:
+    pico_terms:
+      population:
+        core_terms: ["older adults", "elderly", "sedentary individuals"]
+        synonyms: ["aging population", "seniors", "physically inactive adults"]
+        abbreviations: []
+        mesh_candidates: ["Aged", "Sedentary Behavior"]
+      intervention:
+        core_terms: ["mHealth", "smartphone application", "mobile health intervention"]
+        synonyms: ["mobile app", "health app", "digital health tool"]
+        abbreviations: ["mHealth", "app"]
+        mesh_candidates: ["Mobile Applications", "Telemedicine"]
+      comparison:
+        core_terms: ["usual care", "control group", "no intervention"]
+        synonyms: ["standard care", "waitlist control"]
+        mesh_candidates: []
+      outcome:
+        core_terms: ["sedentary time", "physical activity", "sitting time"]
+        synonyms: ["screen time", "sedentary behavior", "activity level"]
+        abbreviations: ["PA", "SB"]
+        mesh_candidates: ["Sedentary Behavior", "Exercise"]
+
+validation:
+  - rule_id: "pico_p_nonempty"
+    description: "Population维度core_terms不能为空"
+    expression: "isinstance(output, dict) and len(output.get('pico_terms', {}).get('population', {}).get('core_terms', [])) >= 1"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "pico_i_nonempty"
+    description: "Intervention维度core_terms不能为空"
+    expression: "isinstance(output, dict) and len(output.get('pico_terms', {}).get('intervention', {}).get('core_terms', [])) >= 1"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "pico_p_min_terms"
+    description: "Population维度(core_terms+synonyms)合计至少3个词"
+    expression: |
+      (isinstance(output, dict) and
+      (len(output.get('pico_terms',{}).get('population',{}).get('core_terms',[])) +
+       len(output.get('pico_terms',{}).get('population',{}).get('synonyms',[]))) >= 3)
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "pico_i_min_terms"
+    description: "Intervention维度(core_terms+synonyms)合计至少3个词"
+    expression: |
+      (isinstance(output, dict) and
+      (len(output.get('pico_terms',{}).get('intervention',{}).get('core_terms',[])) +
+       len(output.get('pico_terms',{}).get('intervention',{}).get('synonyms',[]))) >= 3)
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "pico_o_nonempty"
+    description: "Outcome维度不能为空"
+    expression: "isinstance(output, dict) and len(output.get('pico_terms', {}).get('outcome', {}).get('core_terms', [])) >= 1"
+    severity: soft
+    on_fail: flag_human
+
+manifest:
+  purpose: "将PICO研究问题分解为四维度检索术语表（核心词+同义词+MeSH候选词）"
+  key_constraints:
+    - "P和I维度core_terms必须非空"
+    - "每个维度至少3个检索词（核心+同义）"
+    - "MeSH候选词标注为候选，不代表已验证"
+    - "输出严格遵循JSON schema"
+  output_type: "JSON格式的PICO术语表（pico_terms对象，含population/intervention/comparison/outcome四个维度）"

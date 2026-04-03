@@ -1,0 +1,128 @@
+skill_id: "extraction.outcome_type_classification"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.6.1; Higgins et al. 2023"
+description: "Classify each outcome into binary/continuous/time-to-event/rate/ordinal to determine the correct effect measure and extraction fields."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_3_extract"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "document_map.endpoints"
+    source: "skill_output"
+    description: "Endpoint list from document_map_schema step"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 700
+  content:
+    entry_point: "check_event_or_measurement"
+    nodes:
+      - node_id: "check_event_or_measurement"
+        condition: "Does the outcome measure the occurrence of a distinct event (yes/no per participant)?"
+        branches:
+          - match: "yes"
+            action: "go_to: check_time_dimension"
+          - match: "no"
+            action: "go_to: check_measurement_scale"
+
+      - node_id: "check_time_dimension"
+        condition: "Is the time to the event reported or of interest?"
+        branches:
+          - match: "yes"
+            action: "go_to: classify_tte"
+          - match: "no"
+            action: "go_to: classify_binary"
+
+      - node_id: "classify_tte"
+        condition: "terminal"
+        branches:
+          - match: "always"
+            action: "select: time_to_event"
+
+      - node_id: "classify_binary"
+        condition: "Is this a count of events per person-time (incidence rate)?"
+        branches:
+          - match: "yes"
+            action: "select: rate"
+          - match: "no"
+            action: "select: binary"
+
+      - node_id: "check_measurement_scale"
+        condition: "Is the outcome measured on a continuous numeric scale?"
+        branches:
+          - match: "yes"
+            action: "go_to: check_same_scale"
+          - match: "no"
+            action: "go_to: check_ordinal"
+
+      - node_id: "check_same_scale"
+        condition: "terminal"
+        branches:
+          - match: "always"
+            action: "select: continuous"
+
+      - node_id: "check_ordinal"
+        condition: "Does the outcome have ordered categories (e.g. Likert scale, severity grade)?"
+        branches:
+          - match: "yes"
+            action: "select: ordinal"
+          - match: "no"
+            action: "select: continuous"
+
+    terminal_actions:
+      - id: "select"
+        output_field: "outcome_type"
+        requires_reasoning: true
+
+    effect_measure_mapping:
+      binary: ["OR", "RR", "RD"]
+      continuous: ["MD", "SMD"]
+      time_to_event: ["HR", "log_HR"]
+      rate: ["IRR", "log_IRR"]
+      ordinal: ["OR (proportional odds)", "SMD (if approximately continuous)"]
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["classifications"]
+    properties:
+      classifications:
+        type: array
+        items:
+          endpoint_id: {type: string}
+          outcome_type: {type: string, enum: ["binary", "continuous", "time_to_event", "rate", "ordinal"]}
+          recommended_effect_measures: {type: array, items: {type: string}}
+          classification_reasoning: {type: string}
+  example:
+    classifications:
+      - endpoint_id: "primary_1"
+        outcome_type: "continuous"
+        recommended_effect_measures: ["MD", "SMD"]
+        classification_reasoning: "Systolic BP is a continuous measure on a common scale; MD is preferred"
+
+validation:
+  - rule_id: "all_endpoints_classified"
+    description: "Every endpoint in the document map must be classified"
+    expression: "len(output.get('classifications', [])) >= 1"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "valid_outcome_types"
+    description: "outcome_type must be one of the allowed values"
+    expression: "all(c.get('outcome_type') in ['binary','continuous','time_to_event','rate','ordinal'] for c in output.get('classifications', []))"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Classify each outcome type to determine correct effect measures and extraction fields"
+  key_constraints:
+    - "Use the decision tree: event→binary/TTE/rate; measurement→continuous/ordinal"
+    - "Provide reasoning for each classification"
+    - "Map each type to recommended effect measures"
+    - "TTE outcomes require HR; binary require OR or RR"
+  output_type: "JSON list of endpoint classifications with effect measure recommendations"

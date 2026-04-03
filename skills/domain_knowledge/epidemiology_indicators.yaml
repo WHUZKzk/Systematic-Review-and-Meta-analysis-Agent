@@ -1,0 +1,77 @@
+skill_id: "domain_knowledge.epidemiology_indicators"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "domain_knowledge"
+evidence_base: "Rothman et al. 2008 Modern Epidemiology; Szklo & Nieto 2019"
+description: "Reference library of epidemiological indicator definitions, formulas, and plausibility ranges for extraction and synthesis."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_3_extract"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: schema
+  token_budget: 400
+  content:
+    instruction: "Look up epidemiological indicator definitions for plausibility checking."
+    schema_definition:
+      indicators:
+        incidence_rate:
+          definition: "New cases per unit of person-time at risk"
+          formula: "IR = new_cases / person_time"
+          unit: "per 1000 person-years (common); or per 100,000"
+          outcome_type: "rate"
+          effect_measure: "IRR"
+          plausibility: {min: 0, max: 1000}
+          aliases: ["incidence", "IR", "person-time rate", "incidence density"]
+
+        prevalence:
+          definition: "Proportion of population with the condition at a given time"
+          formula: "P = cases / total_population"
+          unit: "proportion (0-1) or percentage"
+          outcome_type: "binary"
+          effect_measure: "OR or PR"
+          plausibility: {min: 0, max: 1}
+          aliases: ["prevalence", "point prevalence", "period prevalence"]
+
+        SMR:
+          definition: "Standardized Mortality Ratio: ratio of observed to expected deaths"
+          formula: "SMR = observed / expected"
+          unit: "ratio (reference=1.0)"
+          plausibility: {min: 0, max: 20}
+          aliases: ["SMR", "standardized mortality ratio"]
+
+        IRR:
+          definition: "Incidence Rate Ratio: ratio of incidence rates in two groups"
+          formula: "IRR = IR_intervention / IR_control"
+          unit: "ratio (reference=1.0)"
+          effect_measure: "log(IRR) with SE for meta-analysis"
+          plausibility: {min: 0.01, max: 50}
+          aliases: ["IRR", "rate ratio", "incidence density ratio"]
+
+        NNT:
+          definition: "Number Needed to Treat: reciprocal of absolute risk reduction"
+          formula: "NNT = 1 / |RD|"
+          unit: "integer (persons)"
+          note: "Always report with 95% CI derived from CI of RD"
+          aliases: ["NNT", "number needed to treat", "NNH (if harmful)"]
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      indicator_definition: {type: object}
+
+validation: []
+
+manifest:
+  purpose: "Epidemiological indicator reference: incidence, prevalence, SMR, IRR, NNT definitions"
+  key_constraints:
+    - "IRR requires log transformation for pooling in metainc()"
+    - "NNT = 1/|RD|; always computed from RD with CI"
+    - "Prevalence is a proportion (0-1); flag values outside this range"
+  output_type: "L3 reference for extraction validation"

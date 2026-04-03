@@ -1,0 +1,119 @@
+# ============================================================
+# Skill: search.search_augmentation  (A2.4)
+# ============================================================
+
+skill_id: "search.search_augmentation"
+version: "1.0.0"
+domain: "search"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4, Ch.4.4.7; Pearl Growing / Citation Snowballing methodology"
+description: "基于初步检索结果的Top-K摘要，通过PICO维度感知分析发现遗漏的重要检索词，生成增强检索术语。"
+
+trigger:
+  stage: "search"
+  step: "search_step_5"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "top_k_abstracts"
+    source: "stage_output"
+    description: "初步检索结果中Top-K篇（相关性最高）文献的标题+摘要，k通常为5-10"
+  - context_key: "review_question"
+    source: "human_input"
+    description: "原始PICO研究问题"
+  - context_key: "current_pico_terms"
+    source: "stage_output"
+    description: "当前已使用的PICO检索术语表"
+
+decision_protocol:
+  type: checklist
+  token_budget: 700
+  content:
+    instruction: |
+      你是系统综述检索专家，负责通过分析已检索文献发现检索式中遗漏的重要术语。
+      请按以下三步分析Top-K摘要，精准识别检索盲点。
+    items:
+      - check_id: "population_gap"
+        question: "这些高相关文献中，描述目标人群的词汇是否有当前检索式未覆盖的表述？"
+        analysis_prompt: |
+          仔细阅读摘要中描述研究人群的词语。
+          找出当前population检索词未覆盖的：
+          - 人群特征的不同表述（如 adults vs individuals vs participants）
+          - 特定人群子类型（如 community-dwelling older adults）
+          - 疾病/状态的特定阶段描述
+        output: "列出遗漏的population扩展词（最多5个，只保留真正重要的）"
+
+      - check_id: "intervention_gap"
+        question: "这些文献中的干预措施描述，是否有当前检索式未覆盖的重要术语？"
+        analysis_prompt: |
+          关注摘要中描述干预的词语，特别是：
+          - 技术平台的不同称呼（如 wearable device, fitness tracker）
+          - 干预机制的描述词（如 behavior change techniques, BCT）
+          - 具体产品/工具名称（通常不加入主检索，除非是重要类别词）
+        output: "列出遗漏的intervention扩展词（最多5个）"
+
+      - check_id: "outcome_gap"
+        question: "这些文献中的结局指标描述，是否有当前检索式未覆盖的测量方式或指标名称？"
+        analysis_prompt: |
+          关注摘要中结局/测量相关词语：
+          - 结局指标的同义词（如 physical activity vs exercise vs movement）
+          - 测量工具名称（如 accelerometer, IPAQ, pedometer）
+          - 结局的时间维度描述（如 24-hour sedentary time）
+        output: "列出遗漏的outcome扩展词（最多5个）"
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["augmented_terms", "analysis_summary"]
+    properties:
+      augmented_terms:
+        type: object
+        properties:
+          population_additions:
+            type: array
+            items: {type: string}
+            description: "P维度新增词"
+          intervention_additions:
+            type: array
+            items: {type: string}
+            description: "I维度新增词"
+          outcome_additions:
+            type: array
+            items: {type: string}
+            description: "O维度新增词"
+      analysis_summary:
+        type: string
+        description: "增强分析的简要说明（不超过150字）"
+  example:
+    augmented_terms:
+      population_additions: ["community-dwelling older adults", "physically inactive seniors"]
+      intervention_additions: ["wearable device", "fitness tracker", "activity monitor"]
+      outcome_additions: ["accelerometer", "step count", "IPAQ"]
+    analysis_summary: "Top-K摘要中发现3类遗漏词：(1)人群：community-dwelling更精确描述目标人群；(2)干预：wearable device类词在多篇高相关文献中出现；(3)结局：accelerometer是主要测量工具词未被覆盖。"
+
+validation:
+  - rule_id: "has_augmented_terms"
+    description: "至少一个维度有增强词，或明确说明无遗漏"
+    expression: |
+      isinstance(output, dict) and (
+        len(output.get('augmented_terms', {}).get('population_additions', [])) > 0 or
+        len(output.get('augmented_terms', {}).get('intervention_additions', [])) > 0 or
+        len(output.get('augmented_terms', {}).get('outcome_additions', [])) > 0
+      )
+    severity: soft
+    on_fail: flag_human
+
+  - rule_id: "has_analysis_summary"
+    description: "analysis_summary不能为空"
+    expression: "isinstance(output, dict) and len(output.get('analysis_summary', '').strip()) > 10"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "分析Top-K相关文献摘要，发现PICO三维度的遗漏检索词，生成增强术语列表"
+  key_constraints:
+    - "只分析PICO三维度（P/I/O），不分析Comparison"
+    - "每个维度最多5个增强词，只保留真正重要的遗漏词"
+    - "必须提供analysis_summary解释为什么增加这些词"
+  output_type: "JSON格式，含augmented_terms（三维度新增词）和analysis_summary"

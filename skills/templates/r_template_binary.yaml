@@ -1,0 +1,102 @@
+skill_id: "templates.r_template_binary"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "template"
+evidence_base: "Schwarzer et al. R package 'meta' v6; Cochrane Handbook Ch.10"
+description: "R code template for binary outcome meta-analysis using metabin()."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_3_meta"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: template
+  token_budget: 400
+  content:
+    instruction: "Generate R code for binary outcome meta-analysis. Replace placeholders with actual values."
+    template_sections:
+      - section: "Binary Meta-Analysis Template"
+        r_code: |
+          # ─────────────────────────────────────────────────────
+          # Binary Outcome Meta-Analysis
+          # Effect measure: {{EFFECT_MEASURE}} (OR | RR | RD)
+          # Tau² estimator: {{TAU2_METHOD}} (REML | DL | PM)
+          # ─────────────────────────────────────────────────────
+          library(meta)
+
+          # Input data (one row per study)
+          dat <- data.frame(
+            study   = c({{STUDY_LABELS}}),
+            event_e = c({{EVENTS_INTERVENTION}}),    # events in intervention arm
+            n_e     = c({{N_INTERVENTION}}),          # total n in intervention arm
+            event_c = c({{EVENTS_CONTROL}}),          # events in control arm
+            n_c     = c({{N_CONTROL}})                # total n in control arm
+          )
+
+          # Meta-analysis
+          m <- metabin(
+            event.e  = dat$event_e,
+            n.e      = dat$n_e,
+            event.c  = dat$event_c,
+            n.c      = dat$n_c,
+            studlab  = dat$study,
+            sm       = "{{EFFECT_MEASURE}}",           # "OR", "RR", or "RD"
+            method   = "{{TAU2_METHOD}}",              # "REML", "DL", "PM"
+            hakn     = TRUE,                           # HKSJ CI adjustment
+            prediction = TRUE,                         # Report prediction interval
+            title    = "{{OUTCOME_LABEL}}"
+          )
+
+          # Print summary
+          summary(m)
+
+          # Forest plot
+          forest(m,
+            sortvar    = TE,
+            prediction = TRUE,
+            print.tau2 = TRUE,
+            col.predict = "darkblue",
+            leftcols   = c("studlab", "event.e", "n.e", "event.c", "n.c"),
+            leftlabs   = c("Study", "Events\n(Intervention)", "N\n(Intervention)",
+                           "Events\n(Control)", "N\n(Control)"),
+            file = "{{OUTPUT_FILE_PREFIX}}_forest.pdf"
+          )
+
+          # Funnel plot (if k >= 10)
+          if (m$k >= 10) {
+            funnel(m, main = "{{OUTCOME_LABEL}} — Funnel Plot")
+            metabias(m, method.bias = "Egger")
+          }
+
+        placeholders:
+          EFFECT_MEASURE: "OR"
+          TAU2_METHOD: "REML"
+          STUDY_LABELS: "comma-separated quoted study labels"
+          EVENTS_INTERVENTION: "comma-separated integers"
+          N_INTERVENTION: "comma-separated integers"
+          EVENTS_CONTROL: "comma-separated integers"
+          N_CONTROL: "comma-separated integers"
+          OUTCOME_LABEL: "e.g., 'Mortality at 12 months'"
+          OUTPUT_FILE_PREFIX: "e.g., 'mortality_12m'"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      r_code: {type: string}
+      placeholders_filled: {type: object}
+
+validation: []
+
+manifest:
+  purpose: "R code template for binary outcome meta-analysis with metabin(); includes forest + funnel plots"
+  key_constraints:
+    - "Use hakn=TRUE for HKSJ CI adjustment"
+    - "Set prediction=TRUE for prediction interval"
+    - "Only run Egger test if k≥10"
+    - "Supported effect measures: OR, RR, RD"
+  output_type: "L3 reference; R code template for binary meta-analysis"

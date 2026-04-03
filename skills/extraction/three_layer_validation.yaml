@@ -1,0 +1,134 @@
+skill_id: "extraction.three_layer_validation"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.5.3; EQUATOR reporting guidelines"
+description: "Three-layer validation of extracted data: Layer 1 (source traceability), Layer 2 (mathematical logic), Layer 3 (clinical plausibility)."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_4_validate"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "standardized_data"
+    source: "skill_output"
+    description: "Standardized extraction data"
+  - context_key: "document_map"
+    source: "skill_output"
+    description: "Document map for cross-referencing"
+
+decision_protocol:
+  type: checklist
+  token_budget: 800
+  content:
+    instruction: "Apply all three validation layers to each standardized extraction. Report pass/fail for each check."
+    layers:
+      - layer_id: "L1_source_traceability"
+        description: "Layer 1: Confirm source location and match status"
+        checks:
+          - check_id: "L1.1"
+            question: "Is verification_status 'match' or 'partial_match' for this value?"
+            pass_condition: "verification_status in ['match', 'partial_match']"
+            fail_action: "flag_for_re_extraction"
+          - check_id: "L1.2"
+            question: "Is a location_id recorded for this value?"
+            pass_condition: "location_id is not None and location_id != ''"
+            fail_action: "flag_human"
+
+      - layer_id: "L2_mathematical_logic"
+        description: "Layer 2: Check internal mathematical consistency"
+        checks:
+          - check_id: "L2.1"
+            question: "For continuous outcomes: is n_intervention + n_control approximately equal to total_n in document map?"
+            pass_condition: "abs((n_int + n_ctrl) - total_n) / total_n <= 0.10"
+            fail_action: "warn and note discrepancy"
+          - check_id: "L2.2"
+            question: "If SD reported with mean: is SD/mean (CV) within 0.01 to 2.0 (plausible range)?"
+            pass_condition: "0.01 <= abs(sd/mean) <= 2.0 if mean != 0 else True"
+            fail_action: "flag_human"
+          - check_id: "L2.3"
+            question: "For binary outcomes: do reported events ≤ N for each arm?"
+            pass_condition: "events <= n"
+            fail_action: "reject — re-extract"
+          - check_id: "L2.4"
+            question: "If CI was converted to SD: does SE = SD/sqrt(n) approximately equal (CI_upper-CI_lower)/(2×1.96)?"
+            pass_condition: "abs(sd/sqrt(n) - (ci_upper-ci_lower)/(2*1.96)) / (sd/sqrt(n)) <= 0.05"
+            fail_action: "warn and recheck calculation"
+
+      - layer_id: "L3_clinical_plausibility"
+        description: "Layer 3: Check clinical plausibility of extracted values"
+        checks:
+          - check_id: "L3.1"
+            question: "Are baseline values within clinically plausible range for this measure?"
+            pass_condition: "value within expected_range from domain_knowledge.endpoint_definitions"
+            fail_action: "flag_human"
+          - check_id: "L3.2"
+            question: "Is the direction of change consistent with the reported conclusion in abstract?"
+            pass_condition: "change_direction consistent with reported_conclusion"
+            fail_action: "warn — possible extraction error"
+          - check_id: "L3.3"
+            question: "Are sample sizes consistent across endpoints for the same arm?"
+            pass_condition: "n values within 10% across endpoints for same arm and timepoint"
+            fail_action: "note inconsistency"
+
+    aggregation: "all_L1_L2_checks_required; L3_checks_advisory"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["validation_results", "overall_quality_score"]
+    properties:
+      validation_results:
+        type: array
+        items:
+          endpoint_id: {type: string}
+          arm_id: {type: string}
+          timepoint_id: {type: string}
+          L1_pass: {type: boolean}
+          L2_pass: {type: boolean}
+          L3_pass: {type: boolean}
+          overall_pass: {type: boolean}
+          failed_checks: {type: array, items: {type: string}}
+          validation_notes: {type: string}
+      overall_quality_score:
+        type: number
+        description: "Fraction of extraction cells passing all L1+L2 checks"
+      study_level_flag:
+        type: string
+        enum: ["high_quality", "acceptable", "low_quality", "insufficient"]
+  example:
+    validation_results:
+      - endpoint_id: "primary_1"
+        arm_id: "intervention"
+        timepoint_id: "T12w"
+        L1_pass: true
+        L2_pass: true
+        L3_pass: true
+        overall_pass: true
+        failed_checks: []
+        validation_notes: "All checks passed"
+    overall_quality_score: 0.96
+    study_level_flag: "high_quality"
+
+validation:
+  - rule_id: "quality_score_reported"
+    description: "Overall quality score must be computed"
+    expression: "output.get('overall_quality_score') is not None"
+    severity: hard
+    on_fail: retry
+
+domain_references:
+  - ref_skill_id: "domain_knowledge.endpoint_definitions"
+    entry_key: "plausibility_ranges"
+    injection_point: "decision_protocol"
+
+manifest:
+  purpose: "Three-layer validation: source traceability → math logic → clinical plausibility"
+  key_constraints:
+    - "Layer 1 (traceability) and Layer 2 (math) are mandatory; Layer 3 is advisory"
+    - "Events must never exceed N (hard fail)"
+    - "Flag implausible CV ratios for human review"
+    - "Report overall quality score for the study"
+  output_type: "JSON validation results per cell with overall quality score and study flag"

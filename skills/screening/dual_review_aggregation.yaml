@@ -1,0 +1,171 @@
+# ============================================================
+# Skill: screening.dual_review_aggregation  (A2.9)
+# ============================================================
+
+skill_id: "screening.dual_review_aggregation"
+version: "1.0.0"
+domain: "screening"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4, Ch.4.6.2 (Agreement between reviewers)"
+description: >
+  Aggregate dual-review results and classify papers into: agreed-include, agreed-exclude,
+  and disagreement-queue (requiring adjudication). Applies liberal pass logic at title
+  stage and strict consensus logic at abstract stage. Code-executed (no LLM).
+
+trigger:
+  stage: "screening"
+  step: "screening_step_3_agreement"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "reviewer_a_decisions"
+    source: "stage_output"
+    description: "ReviewerAgent-A's decisions for all papers: [{pmid, decision, criteria_assessment, reasoning}]"
+  - context_key: "reviewer_b_decisions"
+    source: "stage_output"
+    description: "ReviewerAgent-B's decisions for all papers (same set)"
+  - context_key: "screening_phase"
+    source: "stage_output"
+    description: "'title' or 'abstract' — determines aggregation logic"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 400
+  content:
+    instruction: "Code-executed aggregation. This protocol defines the rules for implementation."
+    entry_point: "select_aggregation_mode"
+    nodes:
+      - node_id: "select_aggregation_mode"
+        condition: "What is the screening_phase?"
+        branches:
+          - match: "title"
+            action: "go_to: title_liberal_pass"
+          - match: "abstract"
+            action: "go_to: abstract_strict_consensus"
+
+      - node_id: "title_liberal_pass"
+        description: "Liberal pass logic for title screening"
+        rules:
+          - "BOTH reviewers EXCLUDE → EXCLUDE at title stage (do not advance to abstract)"
+          - "At least one reviewer says INCLUDE or UNCERTAIN → pass to abstract screening"
+        rationale: "Maximize recall at title stage; accept false positives to avoid missing real studies"
+        action: "terminal: output_title_aggregation"
+
+      - node_id: "abstract_strict_consensus"
+        description: "Strict consensus for abstract screening"
+        rules:
+          - "Both INCLUDE → AGREED_INCLUDE"
+          - "Both EXCLUDE → AGREED_EXCLUDE"
+          - "INCLUDE vs EXCLUDE (hard disagreement) → DISAGREEMENT (requires adjudication)"
+          - "Either UNCERTAIN (with the other not INCLUDE) → DISAGREEMENT (requires adjudication)"
+          - "INCLUDE + UNCERTAIN → DISAGREEMENT (conservative: do not auto-include if uncertain)"
+        action: "terminal: output_abstract_aggregation"
+
+    terminal_actions:
+      - id: "output_title_aggregation"
+        fields: ["title_excluded", "title_passed", "title_stats"]
+
+      - id: "output_abstract_aggregation"
+        fields: ["agreed_include", "agreed_exclude", "disagreement_queue", "kappa", "agreement_stats"]
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["phase", "agreement_stats"]
+    properties:
+      phase:
+        type: string
+        enum: ["title", "abstract"]
+      # Title phase outputs
+      title_excluded:
+        type: array
+        items: {type: string}
+        description: "PMIDs excluded at title stage (both reviewers said EXCLUDE)"
+      title_passed:
+        type: array
+        items: {type: string}
+        description: "PMIDs passing to abstract screening"
+      # Abstract phase outputs
+      agreed_include:
+        type: array
+        items: {type: string}
+        description: "PMIDs where both reviewers said INCLUDE"
+      agreed_exclude:
+        type: array
+        items: {type: string}
+        description: "PMIDs where both reviewers said EXCLUDE"
+      disagreement_queue:
+        type: array
+        items:
+          type: object
+          required: ["pmid", "reviewer_a_decision", "reviewer_b_decision", "disagreement_type"]
+          properties:
+            pmid:                 {type: string}
+            reviewer_a_decision:  {type: string}
+            reviewer_b_decision:  {type: string}
+            disagreement_type:
+              type: string
+              enum: ["INCLUDE_vs_EXCLUDE", "INCLUDE_vs_UNCERTAIN", "EXCLUDE_vs_UNCERTAIN", "BOTH_UNCERTAIN"]
+            reviewer_a_reasoning: {type: string}
+            reviewer_b_reasoning: {type: string}
+            reviewer_a_criteria:  {type: array}
+            reviewer_b_criteria:  {type: array}
+      kappa:
+        type: number
+        description: "Cohen's kappa between the two reviewers (abstract phase only)"
+      agreement_stats:
+        type: object
+        required: ["total_papers", "agreement_count", "disagreement_count", "agreement_rate"]
+        properties:
+          total_papers:       {type: integer}
+          agreement_count:    {type: integer}
+          disagreement_count: {type: integer}
+          agreement_rate:     {type: number}
+          both_include:       {type: integer}
+          both_exclude:       {type: integer}
+          kappa_category:
+            type: string
+            enum: ["almost_perfect", "substantial", "moderate", "fair", "slight", "poor"]
+  example:
+    phase: "abstract"
+    agreed_include: ["12345678", "23456789"]
+    agreed_exclude: ["34567890", "45678901"]
+    disagreement_queue:
+      - pmid: "56789012"
+        reviewer_a_decision: "INCLUDE"
+        reviewer_b_decision: "UNCERTAIN"
+        disagreement_type: "INCLUDE_vs_UNCERTAIN"
+        reviewer_a_reasoning: "All criteria appear to be met"
+        reviewer_b_reasoning: "Cannot confirm RCT design from abstract"
+    kappa: 0.72
+    agreement_stats:
+      total_papers: 100
+      agreement_count: 87
+      disagreement_count: 13
+      agreement_rate: 0.87
+      both_include: 12
+      both_exclude: 75
+      kappa_category: "substantial"
+
+validation:
+  - rule_id: "phase_field_present"
+    description: "phase field must be 'title' or 'abstract'"
+    expression: "isinstance(output, dict) and output.get('phase') in ['title', 'abstract']"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "agreement_stats_present"
+    description: "agreement_stats must be populated"
+    expression: "isinstance(output, dict) and isinstance(output.get('agreement_stats'), dict)"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Aggregate dual-review decisions using liberal pass (title) or strict consensus (abstract); compute Cohen's kappa"
+  key_constraints:
+    - "Title: both EXCLUDE → excluded; otherwise passes to abstract"
+    - "Abstract: both must agree to decide without adjudication; any disagreement → adjudication queue"
+    - "Disagreement queue must include both reviewers' full reasoning for adjudicator"
+    - "Kappa < 0.40 triggers quality gate block (requires human calibration)"
+  output_type: "JSON with title_excluded/title_passed (title) or agreed/disagreement_queue/kappa (abstract)"

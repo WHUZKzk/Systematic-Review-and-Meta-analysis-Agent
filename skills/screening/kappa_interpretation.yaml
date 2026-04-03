@@ -1,0 +1,112 @@
+# ============================================================
+# Skill: screening.kappa_interpretation  (A2.10)
+# ============================================================
+
+skill_id: "screening.kappa_interpretation"
+version: "1.0.0"
+domain: "screening"
+skill_type: "methodological"
+evidence_base: "Landis & Koch (1977) kappa benchmarks; Cochrane Handbook v6.4, Ch.4.6.2"
+description: >
+  Reference skill for Cohen's kappa calculation formula and interpretation thresholds.
+  Used by the dual_review_aggregation code to compute kappa and categorize agreement quality.
+  L3 reference-level disclosure — loaded on demand by dual_review_aggregation.
+
+trigger:
+  stage: "screening"
+  step: "screening_step_3_agreement"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: checklist
+  token_budget: 300
+  content:
+    instruction: "Reference formulas and thresholds for Cohen's kappa — used by code, not LLM."
+
+    kappa_formula:
+      description: "Cohen's kappa measures agreement beyond chance"
+      formula: "kappa = (Po - Pe) / (1 - Pe)"
+      variables:
+        Po: "Observed agreement proportion = (agreements) / (total papers)"
+        Pe: "Expected agreement by chance = sum(p_a_i * p_b_i) for each category i"
+      categories: ["INCLUDE", "EXCLUDE", "UNCERTAIN"]
+      calculation_steps:
+        - "Count decisions for each category by each reviewer"
+        - "Compute marginal proportions for each reviewer and category"
+        - "Pe = sum over categories of (reviewer_a_proportion_i * reviewer_b_proportion_i)"
+        - "Po = number of agreements / total papers"
+        - "kappa = (Po - Pe) / (1 - Pe)"
+
+    thresholds:
+      - range: "≥ 0.81"
+        label: "almost_perfect"
+        interpretation: "Excellent agreement — proceed normally"
+        system_action: "continue"
+      - range: "0.61 – 0.80"
+        label: "substantial"
+        interpretation: "Good agreement — proceed normally, document kappa"
+        system_action: "continue"
+      - range: "0.41 – 0.60"
+        label: "moderate"
+        interpretation: "Acceptable but borderline — flag in quality report, consider calibration"
+        system_action: "warn_and_continue"
+      - range: "0.21 – 0.40"
+        label: "fair"
+        interpretation: "Poor agreement — flag for human review, calibration recommended"
+        system_action: "flag_human"
+      - range: "< 0.21"
+        label: "slight_or_poor"
+        interpretation: "Very poor agreement — block pipeline, require human calibration session"
+        system_action: "block_until_human"
+
+    iaar_formula:
+      description: "Inter-Annotator Agreement Rate (simpler alternative metric)"
+      formula: "IAAR = agreements / total_papers * 100%"
+      note: "Report alongside kappa for transparency"
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["kappa", "kappa_category", "iaar", "system_action"]
+    properties:
+      kappa:          {type: number}
+      kappa_category: {type: string}
+      iaar:           {type: number}
+      system_action:
+        type: string
+        enum: ["continue", "warn_and_continue", "flag_human", "block_until_human"]
+      details:
+        type: object
+        properties:
+          po: {type: number, description: "Observed agreement proportion"}
+          pe: {type: number, description: "Expected agreement proportion"}
+          total_papers: {type: integer}
+          agreements:   {type: integer}
+  example:
+    kappa: 0.72
+    kappa_category: "substantial"
+    iaar: 0.87
+    system_action: "continue"
+    details:
+      po: 0.87
+      pe: 0.56
+      total_papers: 100
+      agreements: 87
+
+validation:
+  - rule_id: "kappa_range"
+    description: "kappa must be between -1 and 1"
+    expression: "isinstance(output, dict) and -1.0 <= output.get('kappa', 0) <= 1.0"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Provide Cohen's kappa formula, thresholds, and system action rules for inter-reviewer agreement assessment"
+  key_constraints:
+    - "kappa < 0.40 → block pipeline and require human calibration"
+    - "0.40 ≤ kappa < 0.60 → warn but continue"
+    - "kappa ≥ 0.60 → healthy disagreement range, continue normally"
+  output_type: "JSON with kappa value, category label, IAAR, and system_action"

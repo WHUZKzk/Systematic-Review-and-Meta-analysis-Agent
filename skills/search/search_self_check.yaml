@@ -1,0 +1,128 @@
+# ============================================================
+# Skill: search.search_self_check  (A2.6)
+# ============================================================
+
+skill_id: "search.search_self_check"
+version: "1.0.0"
+domain: "search"
+skill_type: "methodological"
+evidence_base: "PRISMA 2020 Statement, Item 7; PRISMA-S Checklist; Cochrane Handbook v6.4, Ch.4.6"
+description: "检索阶段自检：验证检索策略的完整性和合规性，计算PRISMA流程图数据，生成自检报告。"
+
+trigger:
+  stage: "search"
+  step: "search_step_6"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "search_context"
+    source: "stage_output"
+    description: "完整检索记录：包含annotated_terms、main_query、search_results、augmented_terms"
+
+decision_protocol:
+  type: checklist
+  token_budget: 500
+  content:
+    instruction: |
+      检索自检通过代码规则执行（非LLM）。本协议定义自检规则供代码实现。
+    items:
+      - check_id: "term_balance"
+        description: "术语平衡性检查：P和I维度的词数是否充足"
+        hard_rule: "P维度总词数(core+synonyms) >= 3 AND I维度总词数 >= 3"
+        soft_rule:  "O维度总词数 >= 2"
+        on_fail: "记录警告；若hard规则失败则触发回退到pico_term_generation"
+
+      - check_id: "mesh_coverage"
+        description: "MeSH覆盖率检查：关键维度是否有至少1个valid_mesh词"
+        hard_rule: "P和I维度中至少各有1个valid_mesh词"
+        soft_rule:  "O维度至少有1个valid_mesh词"
+        on_fail: "soft失败记录警告；hard失败记录告警（不阻塞，但报告中标注）"
+
+      - check_id: "truncation_check"
+        description: "截词符合理性检查：截词词根不能太短（避免噪声）"
+        rule: "使用*截词的词根长度 >= 4个字符"
+        on_fail: "soft警告，标注具体词条"
+
+      - check_id: "query_executability"
+        description: "检索式可执行性：验证main_query能够在PubMed成功执行"
+        rule: "通过PubMed API实际执行检索，确认返回结果数量 > 0"
+        on_fail: "hard失败，需要修正检索式"
+
+      - check_id: "result_count_sanity"
+        description: "结果数量合理性：检查检索结果数量是否在合理范围"
+        soft_rule: "结果数量在50-50000之间（太少可能漏检，太多可能过于宽泛）"
+        on_fail: "记录警告；结果<50记录'可能过窄'警告；>50000记录'可能过宽'警告"
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["self_check_passed", "checks", "prisma_counts"]
+    properties:
+      self_check_passed:
+        type: boolean
+        description: "所有hard规则是否通过"
+      checks:
+        type: array
+        items:
+          type: object
+          required: ["check_id", "passed", "severity", "message"]
+          properties:
+            check_id:  {type: string}
+            passed:    {type: boolean}
+            severity:  {type: string, enum: ["hard", "soft"]}
+            message:   {type: string}
+      prisma_counts:
+        type: object
+        description: "PRISMA流程图所需数据"
+        required: ["databases_searched", "search_date", "initial_count", "dedup_count", "final_candidate_count"]
+        properties:
+          databases_searched: {type: array, items: {type: string}}
+          search_date:        {type: string}
+          initial_count:      {type: integer, description: "PubMed检索结果总数"}
+          chaining_count:     {type: integer, description: "引文追溯新增数"}
+          dedup_count:        {type: integer, description: "去重后总数"}
+          final_candidate_count: {type: integer, description: "最终候选池大小"}
+      warnings:
+        type: array
+        items: {type: string}
+  example:
+    self_check_passed: true
+    checks:
+      - check_id: "term_balance"
+        passed: true
+        severity: "hard"
+        message: "P维度5词，I维度6词，O维度4词，均符合要求"
+      - check_id: "result_count_sanity"
+        passed: true
+        severity: "soft"
+        message: "检索结果1870条，在合理范围内"
+    prisma_counts:
+      databases_searched: ["PubMed"]
+      search_date: "2024-01-15"
+      initial_count: 1870
+      chaining_count: 12
+      dedup_count: 1882
+      final_candidate_count: 1882
+    warnings: []
+
+validation:
+  - rule_id: "has_prisma_counts"
+    description: "必须包含PRISMA计数数据"
+    expression: "isinstance(output, dict) and isinstance(output.get('prisma_counts'), dict)"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "self_check_status_present"
+    description: "self_check_passed字段必须存在"
+    expression: "isinstance(output, dict) and 'self_check_passed' in output"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "执行检索策略完整性自检，并输出PRISMA流程图所需的计数数据"
+  key_constraints:
+    - "必须检查5项：术语平衡性/MeSH覆盖率/截词合理性/查询可执行性/结果数量合理性"
+    - "hard规则失败 → self_check_passed=false，需修正后重试"
+    - "prisma_counts是必填项，用于后续PRISMA报告生成"
+  output_type: "JSON格式，含self_check_passed布尔值、checks列表和prisma_counts对象"

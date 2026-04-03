@@ -1,0 +1,79 @@
+skill_id: "templates.screening_quality_report_template"
+version: "1.0.0"
+domain: "screening"
+skill_type: "template"
+evidence_base: "PRISMA 2020; Cochrane Handbook v6.4 Ch.4.6"
+description: "Screening quality report template: PRISMA flow counts, inter-rater agreement, exclusion reasons."
+
+trigger:
+  stage: "screening"
+  step: "screening_step_5_report"
+  disclosure_level: "L3_reference"
+
+required_context:
+  - context_key: "screening_report"
+    source: "stage_output"
+    description: "Screening pipeline report"
+
+decision_protocol:
+  type: template
+  token_budget: 350
+  content:
+    instruction: "Fill this template using screening pipeline output data."
+    template_sections:
+      - section: "PRISMA Flow Diagram Data"
+        content: |
+          ## PRISMA Flow Diagram
+
+          **Identification:**
+          - Records identified: {{RECORDS_IDENTIFIED}}
+          - Records removed before screening (duplicates/non-English/etc.): {{RECORDS_REMOVED_PRE}}
+
+          **Screening:**
+          - Records screened (title): {{TITLE_SCREENED}}
+          - Records excluded at title: {{TITLE_EXCLUDED}}
+
+          **Eligibility:**
+          - Records assessed for eligibility (abstract): {{ABSTRACT_ASSESSED}}
+          - Records excluded at abstract: {{ABSTRACT_EXCLUDED}}
+
+          **Included:**
+          - Studies included: {{INCLUDED_COUNT}}
+
+      - section: "Inter-rater Agreement"
+        content: |
+          ## Inter-Rater Agreement Analysis
+
+          | Stage | Cohen's κ | Interpretation | Action Taken |
+          |-------|-----------|----------------|--------------|
+          | Title screening | {{TITLE_KAPPA}} | {{TITLE_KAPPA_INTERP}} | {{TITLE_ACTION}} |
+          | Abstract screening | {{ABSTRACT_KAPPA}} | {{ABSTRACT_KAPPA_INTERP}} | {{ABSTRACT_ACTION}} |
+
+          **Adjudication:** {{ADJUDICATION_COUNT}} items adjudicated; {{ADJUDICATION_INCLUDE_COUNT}} included post-adjudication.
+
+      - section: "Exclusion Reasons"
+        content: |
+          ## Exclusion Reasons (Abstract Stage)
+
+          | Reason | Count |
+          |--------|-------|
+          {{EXCLUSION_REASONS_TABLE}}
+
+          *Note: Studies may be excluded for multiple reasons; primary reason reported.*
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      markdown_report: {type: string}
+
+validation: []
+
+manifest:
+  purpose: "Screening quality report template: PRISMA flow, kappa, exclusion reasons"
+  key_constraints:
+    - "Report kappa for both title and abstract screening stages"
+    - "Include all PRISMA flow counts"
+    - "List top exclusion reasons sorted by frequency"
+  output_type: "L3 reference; Markdown screening quality report template"

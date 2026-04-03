@@ -1,0 +1,125 @@
+# ============================================================
+# Skill: search.boolean_query_construction  (A2.2)
+# ============================================================
+
+skill_id: "search.boolean_query_construction"
+version: "1.0.0"
+domain: "search"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4, Ch.4.4.4; PubMed Search Field Descriptions"
+description: "将经MeSH验证的PICO术语表组装为PubMed兼容的分层布尔检索式：MeSH层OR自由词层，维度间AND连接。"
+
+trigger:
+  stage: "search"
+  step: "search_step_3"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "annotated_terms"
+    source: "stage_output"
+    description: "经MeSH验证的带标注术语表"
+
+decision_protocol:
+  type: template
+  token_budget: 600
+  content:
+    instruction: |
+      布尔检索式通过代码规则组装（非LLM）。本协议定义组装规则供代码实现。
+    assembly_rules:
+
+      within_dimension:
+        operator: "OR"
+        description: "同一PICO维度内所有术语用OR连接"
+        mesh_format:   '"TERM"[MeSH Terms]'
+        free_text_format: '"TERM"[tiab]'
+        truncation: "部分词根可添加*截词（3音节及以上词根，避免过度截词）"
+        phrase_handling: "多词短语使用双引号括起"
+
+      across_dimensions:
+        operator: "AND"
+        description: "P、I、O三个主要维度块之间用AND连接"
+        required_dimensions: ["population", "intervention", "outcome"]
+        optional_dimensions: ["comparison"]
+        note: "Comparison通常不加入主检索式，避免漏检"
+
+      query_template: |
+        (
+          [POPULATION_BLOCK]
+        ) AND (
+          [INTERVENTION_BLOCK]
+        ) AND (
+          [OUTCOME_BLOCK]
+        )
+
+      filters:
+        publication_type: "可选：AND (randomized controlled trial[pt] OR clinical trial[pt])"
+        language: "AND English[lang]（按综述需求决定是否加）"
+        date: "无日期限制（除非研究问题明确限定时间范围）"
+
+      supplementary_query:
+        description: "基于search_augmentation的增强词生成的补充检索式（独立执行，结果合并）"
+        format: "与main_query相同格式，但基于定向增强词"
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["main_query", "dimension_blocks"]
+    properties:
+      main_query:
+        type: string
+        description: "完整的PubMed布尔检索式字符串"
+      dimension_blocks:
+        type: object
+        description: "各维度的独立检索块（用于audit和修改）"
+        properties:
+          population_block:  {type: string}
+          intervention_block:{type: string}
+          outcome_block:     {type: string}
+          comparison_block:  {type: string}
+      supplementary_query:
+        type: string
+        description: "补充检索式（可选，search_augmentation后更新）"
+        default: ""
+  example:
+    main_query: |
+      ("Aged"[MeSH Terms] OR "older adults"[tiab] OR "elderly"[tiab]) AND
+      ("Mobile Applications"[MeSH Terms] OR "mHealth"[tiab] OR "smartphone app"[tiab]) AND
+      ("Sedentary Behavior"[MeSH Terms] OR "sedentary time"[tiab] OR "sitting time"[tiab])
+    dimension_blocks:
+      population_block: '"Aged"[MeSH Terms] OR "older adults"[tiab] OR "elderly"[tiab]'
+      intervention_block: '"Mobile Applications"[MeSH Terms] OR "mHealth"[tiab] OR "smartphone app"[tiab]'
+      outcome_block: '"Sedentary Behavior"[MeSH Terms] OR "sedentary time"[tiab] OR "sitting time"[tiab]'
+      comparison_block: ""
+    supplementary_query: ""
+
+validation:
+  - rule_id: "has_main_query"
+    description: "main_query字段不能为空"
+    expression: "isinstance(output, dict) and len(output.get('main_query', '').strip()) > 10"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "and_connects_dimensions"
+    description: "main_query必须包含AND连接词"
+    expression: "isinstance(output, dict) and 'AND' in output.get('main_query', '')"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "has_dimension_blocks"
+    description: "至少有population和intervention两个维度块"
+    expression: |
+      (isinstance(output, dict) and
+      len(output.get('dimension_blocks', {}).get('population_block', '').strip()) > 0 and
+      len(output.get('dimension_blocks', {}).get('intervention_block', '').strip()) > 0)
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "将经验证的PICO术语组装为PubMed布尔检索式（维度内OR，维度间AND）"
+  key_constraints:
+    - "同一维度内的MeSH词和自由词均用OR连接"
+    - "三个主要维度块(P/I/O)用AND连接"
+    - "多词短语用双引号括起；MeSH词加[MeSH Terms]标签"
+    - "输出包含main_query字符串和各维度独立块"
+  output_type: "JSON格式，含main_query字符串和dimension_blocks对象"

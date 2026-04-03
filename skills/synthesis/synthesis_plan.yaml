@@ -1,0 +1,99 @@
+skill_id: "synthesis.synthesis_plan"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.9; PRISMA 2020"
+description: "Develop a comprehensive synthesis plan including comparison groupings, primary/secondary outcomes, effect measures, and analysis strategy."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_1_plan"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "extraction_table"
+    source: "stage_output"
+    description: "Standardized extraction data for all included studies"
+  - context_key: "review_question"
+    source: "human_input"
+    description: "PICO review question"
+  - context_key: "eligibility_criteria"
+    source: "stage_output"
+    description: "Finalized eligibility criteria from screening"
+
+decision_protocol:
+  type: template
+  token_budget: 700
+  content:
+    instruction: "Develop a structured synthesis plan covering all analysis decisions."
+    template_sections:
+      - section: "Comparison Groups"
+        prompt: "Define the comparisons to be made (e.g., intervention vs. control, dose-response)."
+        constraints:
+          - "Group studies by intervention type if multiple interventions present"
+          - "Define primary comparison (e.g., any exercise vs. no exercise)"
+          - "Define secondary comparisons (e.g., aerobic vs. resistance)"
+
+      - section: "Outcome Hierarchy"
+        prompt: "Rank outcomes as primary, secondary, and exploratory based on review question."
+        constraints:
+          - "Designate exactly 1-2 primary outcomes"
+          - "Secondary outcomes: all other pre-specified outcomes"
+          - "Exploratory: outcomes not pre-specified but found in studies"
+
+      - section: "Analysis Strategy"
+        prompt: "Specify the planned analyses: meta-analysis, subgroup, sensitivity, meta-regression."
+        constraints:
+          - "List pre-specified subgroup variables"
+          - "List sensitivity analyses (e.g., exclude high RoB, per-protocol)"
+          - "State whether meta-regression is planned (requires k≥10)"
+
+      - section: "Data Preparation Notes"
+        prompt: "Note any data harmonization needed before analysis."
+        constraints:
+          - "Unit conversions (e.g., mg/dL to mmol/L)"
+          - "Time-point selection rule (e.g., use longest follow-up per study)"
+          - "Handling of multi-arm studies"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["comparison_groups", "outcome_hierarchy", "analysis_strategy"]
+    properties:
+      comparison_groups:
+        type: array
+        items:
+          group_id: {type: string}
+          intervention_label: {type: string}
+          comparator_label: {type: string}
+          studies_included: {type: array}
+      outcome_hierarchy:
+        type: object
+        properties:
+          primary: {type: array}
+          secondary: {type: array}
+          exploratory: {type: array}
+      analysis_strategy:
+        type: object
+        properties:
+          subgroup_variables: {type: array}
+          sensitivity_analyses: {type: array}
+          meta_regression_planned: {type: boolean}
+      data_preparation_notes: {type: string}
+
+validation:
+  - rule_id: "primary_outcome_defined"
+    description: "At least one primary outcome must be specified"
+    expression: "len(output.get('outcome_hierarchy',{}).get('primary',[])) >= 1"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Develop structured synthesis plan: comparison groups, outcome hierarchy, analysis strategy"
+  key_constraints:
+    - "Define exactly 1-2 primary outcomes"
+    - "List pre-specified subgroup variables"
+    - "Specify all sensitivity analyses before running the analysis"
+    - "Note data preparation steps for unit harmonization"
+  output_type: "JSON synthesis plan with comparison groups, outcomes, and analysis strategy"

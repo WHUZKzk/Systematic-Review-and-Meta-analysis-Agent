@@ -1,0 +1,151 @@
+skill_id: "extraction.data_standardization"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 §6.5; Wan et al. 2014 (BMC Med Res Methodol)"
+description: "Standardize extracted data to a common format required for meta-analysis: convert SE/CI to SD, median/IQR to mean/SD, log-scale to natural scale, compute missing SDs."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_4_validate"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "verified_extractions"
+    source: "skill_output"
+    description: "Verified extractions from traceability_verification step"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 750
+  content:
+    entry_point: "assess_data_sufficiency"
+    nodes:
+      - node_id: "assess_data_sufficiency"
+        condition: "What data form is available for this continuous outcome?"
+        branches:
+          - match: "mean_and_sd"
+            action: "select: template_1 — use as-is"
+          - match: "mean_and_se"
+            action: "select: template_2 — convert SE→SD: SD = SE × sqrt(n)"
+          - match: "mean_and_ci95"
+            action: "select: template_3 — convert CI→SD: SD = (upper-lower)/(2×1.96) × sqrt(n)"
+          - match: "median_and_iqr"
+            action: "select: template_4 — convert via Wan et al. (2014) method"
+          - match: "mean_only_no_spread"
+            action: "go_to: impute_sd"
+          - match: "log_scale_reported"
+            action: "go_to: back_transform"
+          - match: "insufficient_data"
+            action: "classify: cannot_standardize — flag for narrative synthesis"
+
+      - node_id: "impute_sd"
+        condition: "Is SD available from a similar study in this review?"
+        branches:
+          - match: "yes"
+            action: "select: template_5 — borrow SD from comparable study (note imputation)"
+          - match: "no"
+            action: "classify: cannot_standardize — flag for sensitivity analysis"
+
+      - node_id: "back_transform"
+        condition: "terminal"
+        branches:
+          - match: "always"
+            action: >
+              Back-transform: mean_natural = exp(mean_log + 0.5×var_log).
+              Report geometric mean and 95%CI on natural scale.
+
+    standardization_templates:
+      template_1:
+        name: "mean_sd_direct"
+        formula: "Use mean and SD directly"
+        required_inputs: ["mean", "sd", "n"]
+
+      template_2:
+        name: "se_to_sd"
+        formula: "SD = SE × sqrt(n)"
+        required_inputs: ["mean", "se", "n"]
+
+      template_3:
+        name: "ci_to_sd"
+        formula: "SD = (CI_upper - CI_lower) / (2 × 1.96) × sqrt(n)"
+        required_inputs: ["mean", "ci_lower", "ci_upper", "n"]
+
+      template_4:
+        name: "median_iqr_to_mean_sd"
+        formula: >
+          Wan et al. 2014 Method 1: mean ≈ (min + 2×Q1 + 2×median + 2×Q3 + max)/8,
+          SD ≈ (max - min)/4 for n≥15. Use Method 2 for large n.
+        required_inputs: ["median", "q1", "q3", "n"]
+        note: "Approximation; flag in output"
+
+      template_5:
+        name: "borrowed_sd"
+        formula: "Use SD from most similar study in the same review"
+        required_inputs: ["mean", "n", "borrowed_sd_source"]
+        note: "Sensitivity analysis recommended"
+
+    binary_standardization:
+      - "Ensure events ≤ total N for each arm"
+      - "Convert percentage to counts: events = round(pct/100 × n)"
+      - "If only OR/RR reported without counts: note as summary-level data"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["standardized_data"]
+    properties:
+      standardized_data:
+        type: array
+        items:
+          endpoint_id: {type: string}
+          arm_id: {type: string}
+          timepoint_id: {type: string}
+          outcome_type: {type: string}
+          standardized_form: {type: string, description: "mean_sd | events_n | hr_ci95 | cannot_standardize"}
+          values: {type: object}
+          template_applied: {type: string}
+          standardization_notes: {type: string}
+  example:
+    standardized_data:
+      - endpoint_id: "primary_1"
+        arm_id: "intervention"
+        timepoint_id: "T12w"
+        outcome_type: "continuous"
+        standardized_form: "mean_sd"
+        values: {mean: 128.5, sd: 12.3, n: 48}
+        template_applied: "template_2 — SE converted to SD"
+        standardization_notes: "SE=1.78 × sqrt(48) = 12.3"
+
+validation:
+  - rule_id: "sd_positive"
+    description: "SD must be positive for continuous outcomes"
+    expression: "all(v.get('values',{}).get('sd',1) > 0 for v in output.get('standardized_data',[]) if v.get('standardized_form')=='mean_sd')"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "events_le_n"
+    description: "Event count must not exceed total N"
+    expression: "all(v.get('values',{}).get('events',0) <= v.get('values',{}).get('n',999) for v in output.get('standardized_data',[]) if v.get('standardized_form')=='events_n')"
+    severity: hard
+    on_fail: retry
+
+bound_tools:
+  - tool_id: "python_sandbox"
+    usage: "Execute standardization formulas (SE→SD, median/IQR→mean/SD)"
+    required: true
+
+domain_references:
+  - ref_skill_id: "domain_knowledge.standardization_formulas"
+    entry_key: "wan_2014_method"
+    injection_point: "decision_protocol"
+
+manifest:
+  purpose: "Convert heterogeneous data forms to mean+SD or events+N required for meta-analysis"
+  key_constraints:
+    - "Prioritize mean+SD; convert SE, CI, or IQR using standard formulas"
+    - "Use Wan et al. (2014) for median/IQR conversion"
+    - "Flag borrowed SD values for sensitivity analysis"
+    - "Mark cannot_standardize cases for narrative synthesis"
+  output_type: "JSON array of standardized values with template applied and notes"

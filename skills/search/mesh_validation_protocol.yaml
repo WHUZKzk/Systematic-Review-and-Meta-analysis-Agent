@@ -1,0 +1,120 @@
+# ============================================================
+# Skill: search.mesh_validation_protocol  (A2.3)
+# ============================================================
+
+skill_id: "search.mesh_validation_protocol"
+version: "1.0.0"
+domain: "search"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4, Ch.4.4.5; MeSH Database Documentation"
+description: "通过API验证MeSH候选词，将每个候选词分类为valid_mesh/mapped/not_found，并检查是否需要Explode。"
+
+trigger:
+  stage: "search"
+  step: "search_step_2"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "pico_terms"
+    source: "stage_output"
+    description: "pico_term_generation输出的PICO术语表，含mesh_candidates字段"
+
+decision_protocol:
+  type: checklist
+  token_budget: 400
+  content:
+    instruction: |
+      MeSH验证通过代码+API执行（非LLM）。本协议定义验证规则供代码实现。
+    items:
+      - check_id: "api_validate"
+        description: "通过NCBI MeSH数据库API验证每个候选词是否存在"
+        categories:
+          valid_mesh:   "API搜索返回精确匹配的MeSH Term，使用原词"
+          mapped:       "原词不是标准MeSH Term，但存在Entry Term可映射（记录映射关系）"
+          not_found:    "API未能匹配，保留为自由文本词[tiab]使用"
+
+      - check_id: "explode_check"
+        description: "对valid_mesh词判断是否需要Explode（使用[MeSH Terms]还是[MeSH Major Topic]）"
+        rule: "默认使用[MeSH Terms]（含下位词），除非研究问题需要精确限定"
+
+      - check_id: "entry_terms"
+        description: "对valid_mesh词，获取其Entry Terms作为额外自由词候选"
+        rule: "将重要的Entry Terms添加到各维度的synonyms列表"
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["annotated_terms"]
+    properties:
+      annotated_terms:
+        type: object
+        description: "各PICO维度的术语，带有MeSH验证状态"
+        additionalProperties:
+          type: object
+          properties:
+            all_terms:
+              type: array
+              items:
+                type: object
+                required: ["term", "mesh_status", "search_field"]
+                properties:
+                  term:        {type: string}
+                  mesh_status: {type: string, enum: ["valid_mesh", "mapped", "not_found", "free_text"]}
+                  mapped_to:   {type: string, description: "如mapped，记录标准MeSH词"}
+                  search_field: {type: string, description: "[MeSH Terms] 或 [tiab]"}
+                  entry_terms: {type: array, items: {type: string}}
+  example:
+    annotated_terms:
+      population:
+        all_terms:
+          - term: "Aged"
+            mesh_status: "valid_mesh"
+            search_field: "[MeSH Terms]"
+            entry_terms: ["Elderly", "Old Age"]
+          - term: "sedentary adults"
+            mesh_status: "not_found"
+            search_field: "[tiab]"
+            entry_terms: []
+      intervention:
+        all_terms:
+          - term: "Mobile Applications"
+            mesh_status: "valid_mesh"
+            search_field: "[MeSH Terms]"
+            entry_terms: ["smartphone app", "health app"]
+
+validation:
+  - rule_id: "all_terms_annotated"
+    description: "所有MeSH候选词必须有mesh_status标注"
+    expression: |
+      (isinstance(output, dict) and
+      all(
+        all('mesh_status' in t for t in dim.get('all_terms', []))
+        for dim in output.get('annotated_terms', {}).values()
+      ))
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "search_field_assigned"
+    description: "每个术语必须有search_field赋值"
+    expression: |
+      (isinstance(output, dict) and
+      all(
+        all(t.get('search_field', '') != '' for t in dim.get('all_terms', []))
+        for dim in output.get('annotated_terms', {}).values()
+      ))
+    severity: hard
+    on_fail: retry
+
+bound_tools:
+  - tool_id: "mesh_validator"
+    usage: "通过NCBI E-utilities MeSH数据库验证术语是否有效"
+    required: true
+
+manifest:
+  purpose: "API验证MeSH候选词，为每个词标注valid_mesh/mapped/not_found和搜索字段"
+  key_constraints:
+    - "每个候选词必须通过API验证，不能凭经验直接判断"
+    - "valid_mesh词使用[MeSH Terms]字段；not_found词使用[tiab]字段"
+    - "mapped词需记录映射关系（原词→标准MeSH词）"
+  output_type: "JSON格式的带标注术语表（annotated_terms，按PICO维度组织）"

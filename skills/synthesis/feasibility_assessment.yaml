@@ -1,0 +1,100 @@
+skill_id: "synthesis.feasibility_assessment"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.9.1; McKenzie et al. 2019"
+description: "Assess whether quantitative meta-analysis is feasible for each outcome group; route to meta-analysis or narrative synthesis."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_1_plan"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "extraction_table"
+    source: "stage_output"
+    description: "Standardized extraction data from extraction stage"
+
+decision_protocol:
+  type: checklist
+  token_budget: 600
+  content:
+    instruction: "For each proposed outcome group, assess quantitative synthesis feasibility."
+    items:
+      - check_id: "min_studies"
+        question: "Are there ≥2 studies contributing data for this outcome?"
+        pass_condition: "study_count >= 2"
+        fail_action: "synthesis_not_feasible — narrative only"
+
+      - check_id: "outcome_compatibility"
+        question: "Are outcome measures compatible across studies (same type, similar scale, same direction of benefit)?"
+        pass_condition: "outcome_types_consistent == true"
+        fail_action: "consider SMD or narrative"
+
+      - check_id: "arm_compatibility"
+        question: "Do the comparison groups correspond across studies?"
+        pass_condition: "intervention_comparison_comparable == true"
+        fail_action: "subgroup separately or narrative"
+
+      - check_id: "data_availability"
+        question: "Is sufficient data available (mean+SD or events+N for ≥2 studies)?"
+        pass_condition: "standardized_data_available_count >= 2"
+        fail_action: "narrative only for this outcome"
+
+      - check_id: "clinical_homogeneity"
+        question: "Are the populations, interventions, and settings sufficiently similar for pooling?"
+        pass_condition: "clinical_heterogeneity_acceptable == true"
+        fail_action: "meta-analysis feasible but heterogeneity exploration required"
+
+    aggregation: "all_pass: quantitative_meta_analysis; partial_pass: meta_analysis_with_caution; fail: narrative_synthesis"
+
+    synthesis_routing:
+      quantitative_meta_analysis:
+        conditions: "min_studies PASS AND outcome_compatibility PASS AND data_availability PASS"
+        next_step: "effect_measure_selection"
+      narrative_only:
+        conditions: "min_studies FAIL OR data_availability FAIL"
+        next_step: "narrative_synthesis_plan"
+      meta_analysis_with_caution:
+        conditions: "quantitative feasible but clinical_homogeneity concern"
+        next_step: "effect_measure_selection + heterogeneity_exploration_required"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["outcome_groups"]
+    properties:
+      outcome_groups:
+        type: array
+        items:
+          outcome_id: {type: string}
+          outcome_name: {type: string}
+          study_count: {type: integer}
+          feasibility: {type: string, enum: ["meta_analysis", "meta_analysis_with_caution", "narrative_only"]}
+          check_results: {type: object}
+          feasibility_reasoning: {type: string}
+  example:
+    outcome_groups:
+      - outcome_id: "primary_sbp"
+        outcome_name: "Systolic blood pressure"
+        study_count: 5
+        feasibility: "meta_analysis"
+        check_results: {min_studies: "PASS", outcome_compatibility: "PASS", data_availability: "PASS"}
+        feasibility_reasoning: "5 studies with continuous SBP data, all reporting mean+SD, comparable groups"
+
+validation:
+  - rule_id: "routing_assigned"
+    description: "Each outcome group must be routed to meta_analysis, meta_analysis_with_caution, or narrative_only"
+    expression: "all(og.get('feasibility') in ['meta_analysis','meta_analysis_with_caution','narrative_only'] for og in output.get('outcome_groups',[]))"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Determine if quantitative meta-analysis is feasible per outcome group"
+  key_constraints:
+    - "Minimum 2 studies required for any pooled analysis"
+    - "Assess data compatibility before routing to meta-analysis"
+    - "Clinical heterogeneity concern routes to meta_analysis_with_caution"
+    - "Document reasoning for each feasibility decision"
+  output_type: "JSON outcome group routing decisions with feasibility and reasoning"

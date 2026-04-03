@@ -1,0 +1,88 @@
+skill_id: "templates.r_template_generic"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "template"
+evidence_base: "Schwarzer et al. R package 'meta' v6"
+description: "R code template for generic effect size meta-analysis using metagen() — for HR, SMD from pre-computed log-scale estimates, or any other pre-computed effect with SE."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_3_meta"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: template
+  token_budget: 400
+  content:
+    instruction: "Generate R code for generic effect size meta-analysis. Use for HR, pre-computed SMD, or any TE+seTE input."
+    template_sections:
+      - section: "Generic Effect Size Template"
+        r_code: |
+          # ─────────────────────────────────────────────────────
+          # Generic Effect Size Meta-Analysis (metagen)
+          # Use for: HR, pre-computed log-scale estimates
+          # ─────────────────────────────────────────────────────
+          library(meta)
+
+          dat <- data.frame(
+            study  = c({{STUDY_LABELS}}),
+            TE     = c({{LOG_EFFECT_SIZES}}),   # log(HR) or log(OR) or SMD
+            seTE   = c({{SE_VALUES}})            # standard errors of TE
+          )
+
+          m <- metagen(
+            TE       = dat$TE,
+            seTE     = dat$seTE,
+            studlab  = dat$study,
+            sm       = "{{EFFECT_MEASURE}}",     # "HR", "OR", "SMD", "MD"
+            method   = "{{TAU2_METHOD}}",
+            hakn     = TRUE,
+            prediction = TRUE,
+            backtransf = TRUE,                   # Back-transform from log scale
+            title    = "{{OUTCOME_LABEL}}"
+          )
+
+          summary(m)
+
+          forest(m,
+            sortvar    = TE,
+            prediction = TRUE,
+            print.tau2 = TRUE,
+            refline    = {{REFERENCE_LINE}},      # 1 for ratio measures; 0 for differences
+            col.predict = "darkblue",
+            file       = "{{OUTPUT_FILE_PREFIX}}_forest.pdf"
+          )
+
+          if (m$k >= 10) {
+            funnel(m, main = "{{OUTCOME_LABEL}} — Funnel Plot")
+            metabias(m, method.bias = "Egger")
+          }
+
+        placeholders:
+          EFFECT_MEASURE: "HR"
+          TAU2_METHOD: "REML"
+          STUDY_LABELS: "quoted study labels"
+          LOG_EFFECT_SIZES: "comma-separated log(HR) or log(OR) values"
+          SE_VALUES: "comma-separated SE values"
+          OUTCOME_LABEL: "e.g., 'Overall Survival (HR)'"
+          REFERENCE_LINE: "1"
+          OUTPUT_FILE_PREFIX: "e.g., 'os_hr'"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      r_code: {type: string}
+
+validation: []
+
+manifest:
+  purpose: "R metagen() template for pre-computed log-scale effect sizes (HR, pre-computed ORs, SMD)"
+  key_constraints:
+    - "Input must be log(HR) with SE(log(HR)) — use standardization_formulas skill"
+    - "Set backtransf=TRUE to display HR (not log HR) in forest plot"
+    - "refline=1 for ratio measures; refline=0 for differences"
+  output_type: "L3 reference; R code template for generic effect size meta-analysis"

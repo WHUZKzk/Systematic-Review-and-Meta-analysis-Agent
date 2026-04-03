@@ -1,0 +1,145 @@
+skill_id: "synthesis.effect_measure_selection"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.6.4, Ch.10.4; Deeks 2002"
+description: "Select the appropriate effect measure for each outcome group based on outcome type and study design."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_1_plan"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "outcome_groups"
+    source: "skill_output"
+    description: "Outcome group feasibility assessment"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 700
+  content:
+    entry_point: "check_outcome_type"
+    nodes:
+      - node_id: "check_outcome_type"
+        condition: "What is the outcome type for this group?"
+        branches:
+          - match: "continuous"
+            action: "go_to: check_same_scale"
+          - match: "binary"
+            action: "go_to: check_rare_events"
+          - match: "time_to_event"
+            action: "select: HR (hazard ratio) — use log-scale for analysis"
+          - match: "rate"
+            action: "select: IRR (incidence rate ratio) — use log-scale"
+          - match: "ordinal"
+            action: "go_to: check_ordinal_approach"
+
+      - node_id: "check_same_scale"
+        condition: "Are all studies measuring on the same scale (same instrument, same units)?"
+        branches:
+          - match: "yes"
+            action: "select: MD (mean difference) — natural scale, clinically interpretable"
+          - match: "no"
+            action: "select: SMD (standardized mean difference) — unitless, enables cross-instrument pooling"
+
+      - node_id: "check_rare_events"
+        condition: "Are events rare (event rate < 10% in any arm across studies)?"
+        branches:
+          - match: "yes_rare"
+            action: "select: OR (odds ratio) — preferred for rare events; use Peto method or MH"
+          - match: "no_common"
+            action: "go_to: check_constant_rr"
+
+      - node_id: "check_constant_rr"
+        condition: "Is relative risk (RR) assumed constant across studies?"
+        branches:
+          - match: "yes"
+            action: "select: RR (risk ratio/relative risk) — more intuitive interpretation"
+          - match: "no_baseline_varies"
+            action: "select: OR (odds ratio) — more stable across varying baseline risks"
+          - match: "absolute_preferred"
+            action: "select: RD (risk difference) — for NNT calculation; beware heterogeneity"
+
+      - node_id: "check_ordinal_approach"
+        condition: "Can the ordinal scale be treated as approximately continuous (≥5 levels, symmetric)?"
+        branches:
+          - match: "yes"
+            action: "select: SMD — treat as continuous"
+          - match: "no"
+            action: "select: OR (proportional odds) — ordinal logistic approach"
+
+    effect_measure_properties:
+      MD:
+        scale: "natural"
+        requires: ["mean", "sd", "n per arm"]
+        r_function: "metacont()"
+        interpretation: "Absolute difference in original units"
+      SMD:
+        scale: "natural (standardized)"
+        requires: ["mean", "sd", "n per arm"]
+        r_function: "metacont(sm='SMD')"
+        interpretation: "Effect in SD units; 0.2=small, 0.5=medium, 0.8=large (Cohen)"
+      OR:
+        scale: "log"
+        requires: ["events and n per arm"]
+        r_function: "metabin(sm='OR')"
+        interpretation: "Odds ratio; >1 favours intervention (if higher is better)"
+      RR:
+        scale: "log"
+        requires: ["events and n per arm"]
+        r_function: "metabin(sm='RR')"
+        interpretation: "Relative risk; >1 favours intervention (if higher is better)"
+      RD:
+        scale: "natural"
+        requires: ["events and n per arm"]
+        r_function: "metabin(sm='RD')"
+        interpretation: "Absolute risk difference; used to compute NNT"
+      HR:
+        scale: "log"
+        requires: ["log_HR", "SE(log_HR)"]
+        r_function: "metagen(TE=log_hr, seTE=se_log_hr)"
+        interpretation: "Hazard ratio; <1 favours intervention for event reduction"
+      IRR:
+        scale: "log"
+        requires: ["events", "person_time per arm"]
+        r_function: "metainc()"
+        interpretation: "Incidence rate ratio"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["effect_measure_decisions"]
+    properties:
+      effect_measure_decisions:
+        type: array
+        items:
+          outcome_id: {type: string}
+          selected_effect_measure: {type: string}
+          r_function: {type: string}
+          required_data_form: {type: array}
+          decision_reasoning: {type: string}
+  example:
+    effect_measure_decisions:
+      - outcome_id: "primary_sbp"
+        selected_effect_measure: "MD"
+        r_function: "metacont()"
+        required_data_form: ["mean", "sd", "n"]
+        decision_reasoning: "Continuous outcome (SBP mmHg), same scale across all studies → MD preferred"
+
+validation:
+  - rule_id: "effect_measure_valid"
+    description: "Selected effect measures must be from the supported set"
+    expression: "all(d.get('selected_effect_measure') in ['MD','SMD','OR','RR','RD','HR','IRR'] for d in output.get('effect_measure_decisions',[]))"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Select effect measure (MD/SMD/OR/RR/HR/IRR) for each outcome group"
+  key_constraints:
+    - "Same scale → MD; different scales → SMD"
+    - "Rare events (<10%) → prefer OR with Peto method"
+    - "Time-to-event → HR on log scale"
+    - "Provide R function name for each decision"
+  output_type: "JSON effect measure decisions per outcome group with R function"

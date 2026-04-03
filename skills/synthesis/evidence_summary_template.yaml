@@ -1,0 +1,142 @@
+skill_id: "synthesis.evidence_summary_template"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.15; GRADE Working Group 2013; Guyatt et al. 2011 (BMJ)"
+description: "Generate a structured evidence summary with 7 fixed sections covering effect estimates, heterogeneity, publication bias, GRADE certainty, and clinical interpretation."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_7_report"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "meta_analysis_results"
+    source: "skill_output"
+    description: "Pooled estimates, CI, I², tau², prediction intervals"
+  - context_key: "grade_assessments"
+    source: "skill_output"
+    description: "GRADE certainty ratings per outcome"
+
+decision_protocol:
+  type: template
+  token_budget: 900
+  content:
+    instruction: >
+      Generate a structured evidence summary using the 7 sections below.
+      Be precise, clinically grounded, and explicitly link evidence to GRADE ratings.
+    template_sections:
+      - section: "1. Summary of Included Studies"
+        prompt: "Describe the body of evidence: number of studies, total participants, study designs, geographical spread, follow-up duration, and RoB profile."
+        required_fields:
+          - "n_studies, n_participants, study_designs, countries, follow_up_range, rob_distribution"
+        content_rules:
+          - "Report range of follow-up, not just median"
+          - "State proportion of low/some concerns/high RoB studies"
+
+      - section: "2. Primary Outcome Effect Estimates"
+        prompt: "Report pooled effect size with 95% CI, 95% prediction interval (if random-effects), and p-value for each primary outcome."
+        required_fields:
+          - "effect_measure, pooled_estimate, ci_95, prediction_interval, p_value, n_studies_contributing"
+        content_rules:
+          - "State effect measure (e.g., MD, OR, HR)"
+          - "Report PI alongside CI for random-effects models"
+          - "Translate to clinical terms where possible (e.g., mmHg reduction in SBP)"
+
+      - section: "3. Heterogeneity Assessment"
+        prompt: "Report and interpret I², tau², Q-test for each primary outcome. Describe identified sources."
+        required_fields:
+          - "i2, tau2, q_p_value, heterogeneity_category, source_hypotheses_tested, subgroup_results"
+        content_rules:
+          - "Use category labels: not important / moderate / substantial / considerable"
+          - "Report subgroup analysis results if conducted"
+
+      - section: "4. Publication Bias Assessment"
+        prompt: "Report funnel plot asymmetry, Egger test results, and trim-and-fill estimates if applicable."
+        required_fields:
+          - "funnel_symmetry, egger_p, trim_fill_studies_added, adjusted_estimate"
+        content_rules:
+          - "Only conduct Egger test if k≥10"
+          - "State whether adjusted estimates meaningfully change conclusions"
+
+      - section: "5. GRADE Certainty of Evidence"
+        prompt: "Provide GRADE certainty rating per outcome with downgrading/upgrading justifications."
+        required_fields:
+          - "outcome_name, certainty_rating, downgrade_reasons, upgrade_reasons, grade_rationale"
+        content_rules:
+          - "Use: High / Moderate / Low / Very Low"
+          - "State each downgrade domain: risk of bias, inconsistency, indirectness, imprecision, publication bias"
+
+      - section: "6. Clinical Interpretation"
+        prompt: "Interpret findings in clinical context: magnitude of effect, minimal clinically important difference (MCID), NNT if applicable, applicability."
+        required_fields:
+          - "effect_vs_mcid, nnt_estimate, generalizability_statement, subgroup_applicability"
+        content_rules:
+          - "Compare effect size to MCID for the outcome"
+          - "Compute NNT from RD if binary outcome"
+          - "Comment on applicability to specific patient populations"
+
+      - section: "7. Conclusions and Research Gaps"
+        prompt: "State main conclusions per outcome, overall strength of evidence, and remaining research gaps."
+        required_fields:
+          - "main_conclusion_per_outcome, overall_evidence_strength, research_gaps"
+        content_rules:
+          - "Be explicit about what the evidence does and does not support"
+          - "List 2-3 specific research gaps"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["sections"]
+    properties:
+      sections:
+        type: object
+        properties:
+          summary_of_studies: {type: string}
+          effect_estimates: {type: object}
+          heterogeneity: {type: object}
+          publication_bias: {type: object}
+          grade_certainty: {type: array}
+          clinical_interpretation: {type: object}
+          conclusions: {type: object}
+  example:
+    sections:
+      summary_of_studies: "8 RCTs (n=642) from 6 countries; follow-up 8-24 weeks; 5 low risk, 3 some concerns"
+      effect_estimates:
+        primary_sbp:
+          pooled_md: -5.2
+          ci_95: [-7.8, -2.6]
+          prediction_interval: [-12.4, 2.0]
+          p_value: 0.0003
+      heterogeneity:
+        primary_sbp: {i2: 52, category: "substantial", subgroup_by_duration: "trend p=0.08"}
+      publication_bias:
+        primary_sbp: {funnel_symmetry: "no evidence of asymmetry", egger_p: 0.43}
+      grade_certainty:
+        - outcome: "SBP reduction"
+          rating: "Moderate"
+          downgrade: ["inconsistency (I²=52%)"]
+          rationale: "Downgraded 1 level for inconsistency"
+      clinical_interpretation:
+        effect_vs_mcid: "MD -5.2 mmHg exceeds MCID of 4 mmHg for SBP reduction"
+        generalizability: "Results applicable to hypertensive adults; evidence from mostly European/Asian RCTs"
+      conclusions:
+        main: "Aerobic exercise significantly reduces SBP (MD -5.2 mmHg, moderate certainty)"
+        research_gaps: ["Long-term effects >24 weeks", "Effectiveness in elderly (>75 years)"]
+
+validation:
+  - rule_id: "all_sections_present"
+    description: "All 7 sections must be populated"
+    expression: "all(k in output.get('sections',{}) for k in ['summary_of_studies','effect_estimates','heterogeneity','publication_bias','grade_certainty','clinical_interpretation','conclusions'])"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Generate structured 7-section evidence summary: studies, effects, heterogeneity, bias, GRADE, clinical interpretation, conclusions"
+  key_constraints:
+    - "Always include prediction interval alongside 95% CI for random-effects"
+    - "State GRADE certainty rating with explicit downgrade/upgrade reasons"
+    - "Compare effect to MCID for clinical relevance"
+    - "List 2-3 specific research gaps"
+  output_type: "JSON structured evidence summary with 7 sections"

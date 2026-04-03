@@ -1,0 +1,123 @@
+skill_id: "extraction.traceability_verification"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.5.3.2; Li et al. 2021"
+description: "Verify that each extracted value genuinely appears at its stated source location; classify as match/partial_match/mismatch and trigger re-extraction if needed."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_4_validate"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "extractions"
+    source: "skill_output"
+    description: "Extraction list from extraction_localization step"
+  - context_key: "full_text_sections"
+    source: "stage_output"
+    description: "Parsed full-text with location IDs"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 700
+  content:
+    entry_point: "compare_extracted_to_source"
+    nodes:
+      - node_id: "compare_extracted_to_source"
+        condition: "Does the numeric value in the extraction exactly match the value at location_id?"
+        branches:
+          - match: "exact_match"
+            action: "classify: match"
+          - match: "within_rounding"
+            action: "go_to: check_rounding"
+          - match: "different_value"
+            action: "go_to: check_different_source"
+          - match: "value_not_found_at_location"
+            action: "classify: mismatch — trigger re-extraction"
+
+      - node_id: "check_rounding"
+        condition: "Is the discrepancy ≤ 0.5 of the reported precision (rounding error)?"
+        branches:
+          - match: "yes"
+            action: "classify: match (rounding)"
+          - match: "no"
+            action: "go_to: check_different_source"
+
+      - node_id: "check_different_source"
+        condition: "Does the value appear at a different location in the document?"
+        branches:
+          - match: "yes_found_elsewhere"
+            action: "classify: partial_match — update location_id"
+          - match: "not_found_anywhere"
+            action: "classify: mismatch — flag for human review"
+
+    classification_definitions:
+      match:
+        description: "Value confirmed at stated location (exact or within rounding)"
+        action: "accept"
+      partial_match:
+        description: "Value found but at different location than stated"
+        action: "update location_id and accept"
+      mismatch:
+        description: "Value cannot be verified at any location"
+        action: "trigger re-extraction or flag_human"
+
+    re_extraction_trigger_conditions:
+      - "mismatch on primary endpoint"
+      - "mismatch affecting >30% of extractions for a study"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["verification_results"]
+    properties:
+      verification_results:
+        type: array
+        items:
+          endpoint_id: {type: string}
+          arm_id: {type: string}
+          timepoint_id: {type: string}
+          verification_status: {type: string, enum: ["match", "partial_match", "mismatch"]}
+          confirmed_location_id: {type: string}
+          discrepancy_note: {type: string}
+          re_extraction_required: {type: boolean}
+      overall_verification_rate: {type: number, description: "Fraction of extractions that passed (match or partial_match)"}
+  example:
+    verification_results:
+      - endpoint_id: "primary_1"
+        arm_id: "intervention"
+        timepoint_id: "T12w"
+        verification_status: "match"
+        confirmed_location_id: "Table_2"
+        discrepancy_note: ""
+        re_extraction_required: false
+    overall_verification_rate: 0.95
+
+validation:
+  - rule_id: "all_extractions_verified"
+    description: "Every extraction must have a verification result"
+    expression: "len(output.get('verification_results', [])) >= 1"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "overall_rate_acceptable"
+    description: "Overall verification rate should be ≥ 0.70"
+    expression: "output.get('overall_verification_rate', 0) >= 0.70"
+    severity: soft
+    on_fail: flag_human
+
+bound_tools:
+  - tool_id: "source_traceability_verifier"
+    usage: "Programmatically check if value string appears in the stated document section"
+    required: true
+
+manifest:
+  purpose: "Verify extracted values against source document; classify match/partial_match/mismatch"
+  key_constraints:
+    - "Check every extraction against its stated location_id"
+    - "Allow rounding tolerance ≤ 0.5 of reported precision"
+    - "Trigger re-extraction on primary endpoint mismatches"
+    - "Report overall verification rate"
+  output_type: "JSON verification results per extraction with overall verification rate"

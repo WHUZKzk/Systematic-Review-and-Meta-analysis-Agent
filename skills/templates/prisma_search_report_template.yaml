@@ -1,0 +1,98 @@
+skill_id: "templates.prisma_search_report_template"
+version: "1.0.0"
+domain: "search"
+skill_type: "template"
+evidence_base: "Rethlefsen et al. 2021 PRISMA-S (Syst Rev); PRISMA 2020 supplement"
+description: "PRISMA-S compliant search report Markdown template with 4 sections."
+
+trigger:
+  stage: "search"
+  step: "search_step_8"
+  disclosure_level: "L3_reference"
+
+required_context:
+  - context_key: "search_report"
+    source: "stage_output"
+    description: "Search execution report from search pipeline"
+
+decision_protocol:
+  type: template
+  token_budget: 400
+  content:
+    instruction: "Fill this Markdown template using the search execution data."
+    template_sections:
+      - section: "1. Search Strategy and Databases"
+        content: |
+          ## 1. Search Strategy and Databases
+
+          **Databases searched:**
+          - PubMed/MEDLINE (searched {{SEARCH_DATE}})
+          - [Additional databases if applicable]
+
+          **Date range:** {{DATE_RANGE_START}} to {{DATE_RANGE_END}}
+
+          **Full search string (PubMed):**
+          ```
+          {{FINAL_PUBMED_QUERY}}
+          ```
+
+          **MeSH terms validated:** {{MESH_TERMS_LIST}}
+
+          **Search filters applied:** {{FILTERS_APPLIED}}
+
+      - section: "2. Search Results"
+        content: |
+          ## 2. Search Results
+
+          | Source | Records Retrieved |
+          |--------|-------------------|
+          | PubMed initial search | {{INITIAL_HITS}} |
+          | After augmentation | {{AUGMENTED_HITS}} |
+          | Via reference chaining | {{CHAINING_HITS}} |
+          | **Total (before deduplication)** | **{{TOTAL_BEFORE_DEDUP}}** |
+          | **After deduplication** | **{{TOTAL_AFTER_DEDUP}}** |
+
+      - section: "3. Search Development Notes"
+        content: |
+          ## 3. Search Development Notes
+
+          **PICO dimensions covered:**
+          - Population: {{POPULATION_TERMS}}
+          - Intervention: {{INTERVENTION_TERMS}}
+          - Comparison: {{COMPARISON_TERMS}}
+          - Outcome: {{OUTCOME_TERMS}}
+
+          **Augmentation applied:** {{AUGMENTATION_SUMMARY}}
+
+          **Self-check results:** {{SELF_CHECK_SUMMARY}}
+
+      - section: "4. PRISMA-S Compliance Checklist"
+        content: |
+          ## 4. PRISMA-S Compliance Checklist
+
+          - [x] S1: All databases named with interface/platform and dates
+          - [x] S2: Full search strings provided for all databases
+          - [x] S3: Date range of search specified
+          - [x] S4: Search filters stated
+          - [{{S5_CHECK}}] S5: Grey literature/supplementary sources searched
+          - [x] S6: Reference list of included studies searched
+          - [x] S7: Citation searching conducted (reference chaining)
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      markdown_report: {type: string}
+      prisma_s_compliance: {type: object}
+
+validation: []
+
+manifest:
+  purpose: "PRISMA-S compliant search report template: 4 sections covering strategy, results, development, compliance"
+  key_constraints:
+    - "Include full Boolean search string verbatim"
+    - "Report record counts at each stage"
+    - "Check all PRISMA-S items S1-S7"
+    - "Document augmentation and self-check outcomes"
+  output_type: "L3 reference; Markdown search report template"

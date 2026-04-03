@@ -1,0 +1,104 @@
+skill_id: "templates.r_template_continuous"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "template"
+evidence_base: "Schwarzer et al. R package 'meta' v6; Cochrane Handbook Ch.6.4"
+description: "R code template for continuous outcome meta-analysis using metacont() with MD or SMD."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_3_meta"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: template
+  token_budget: 400
+  content:
+    instruction: "Generate R code for continuous outcome meta-analysis. Replace placeholders."
+    template_sections:
+      - section: "Continuous Meta-Analysis Template"
+        r_code: |
+          # ─────────────────────────────────────────────────────
+          # Continuous Outcome Meta-Analysis
+          # Effect measure: {{EFFECT_MEASURE}} (MD | SMD)
+          # ─────────────────────────────────────────────────────
+          library(meta)
+
+          dat <- data.frame(
+            study  = c({{STUDY_LABELS}}),
+            mean_e = c({{MEAN_INTERVENTION}}),   # mean in intervention arm
+            sd_e   = c({{SD_INTERVENTION}}),     # SD in intervention arm
+            n_e    = c({{N_INTERVENTION}}),       # n in intervention arm
+            mean_c = c({{MEAN_CONTROL}}),        # mean in control arm
+            sd_c   = c({{SD_CONTROL}}),          # SD in control arm
+            n_c    = c({{N_CONTROL}})             # n in control arm
+          )
+
+          m <- metacont(
+            n.e      = dat$n_e,
+            mean.e   = dat$mean_e,
+            sd.e     = dat$sd_e,
+            n.c      = dat$n_c,
+            mean.c   = dat$mean_c,
+            sd.c     = dat$sd_c,
+            studlab  = dat$study,
+            sm       = "{{EFFECT_MEASURE}}",      # "MD" or "SMD"
+            method   = "{{TAU2_METHOD}}",
+            hakn     = TRUE,
+            prediction = TRUE,
+            title    = "{{OUTCOME_LABEL}}",
+            label.e  = "{{INTERVENTION_LABEL}}",
+            label.c  = "{{CONTROL_LABEL}}"
+          )
+
+          summary(m)
+
+          forest(m,
+            sortvar     = TE,
+            prediction  = TRUE,
+            print.tau2  = TRUE,
+            col.predict = "darkblue",
+            xlab        = "{{X_AXIS_LABEL}}",
+            file        = "{{OUTPUT_FILE_PREFIX}}_forest.pdf"
+          )
+
+          if (m$k >= 10) {
+            funnel(m, main = "{{OUTCOME_LABEL}} — Funnel Plot")
+            metabias(m, method.bias = "Egger")
+          }
+
+        placeholders:
+          EFFECT_MEASURE: "MD"
+          TAU2_METHOD: "REML"
+          STUDY_LABELS: "quoted study labels"
+          MEAN_INTERVENTION: "comma-separated means"
+          SD_INTERVENTION: "comma-separated SDs"
+          N_INTERVENTION: "comma-separated integers"
+          MEAN_CONTROL: "comma-separated means"
+          SD_CONTROL: "comma-separated SDs"
+          N_CONTROL: "comma-separated integers"
+          OUTCOME_LABEL: "e.g., 'Systolic Blood Pressure (mmHg)'"
+          X_AXIS_LABEL: "e.g., 'MD (mmHg)' or 'SMD'"
+          INTERVENTION_LABEL: "e.g., 'Exercise'"
+          CONTROL_LABEL: "e.g., 'Control'"
+          OUTPUT_FILE_PREFIX: "e.g., 'sbp_12w'"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      r_code: {type: string}
+      placeholders_filled: {type: object}
+
+validation: []
+
+manifest:
+  purpose: "R code template for continuous outcome meta-analysis with metacont(); MD or SMD"
+  key_constraints:
+    - "Use sm='MD' when all studies use same scale; sm='SMD' for different scales"
+    - "hakn=TRUE and prediction=TRUE always set"
+    - "Provide units in x_axis_label for MD"
+  output_type: "L3 reference; R code template for continuous meta-analysis"

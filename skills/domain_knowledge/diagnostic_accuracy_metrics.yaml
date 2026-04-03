@@ -1,0 +1,94 @@
+skill_id: "domain_knowledge.diagnostic_accuracy_metrics"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "domain_knowledge"
+evidence_base: "Cochrane DTA Handbook; Deeks et al. 2010; Bossuyt et al. 2015 STARD"
+description: "Reference definitions for diagnostic accuracy metrics: sensitivity, specificity, AUC, LR+/LR-, for extraction and synthesis in diagnostic accuracy reviews."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_3_extract"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: schema
+  token_budget: 400
+  content:
+    instruction: "Reference for diagnostic accuracy metric definitions and calculations."
+    schema_definition:
+      metrics:
+        sensitivity:
+          definition: "True positive rate: proportion of diseased correctly identified"
+          formula: "Se = TP / (TP + FN)"
+          unit: "proportion (0-1)"
+          aliases: ["sensitivity", "recall", "true positive rate", "TPR"]
+          plausibility: {min: 0, max: 1}
+
+        specificity:
+          definition: "True negative rate: proportion of non-diseased correctly excluded"
+          formula: "Sp = TN / (TN + FP)"
+          unit: "proportion (0-1)"
+          aliases: ["specificity", "true negative rate", "TNR"]
+          plausibility: {min: 0, max: 1}
+
+        ppv:
+          definition: "Positive Predictive Value: probability of disease given positive test"
+          formula: "PPV = TP / (TP + FP)"
+          unit: "proportion (0-1)"
+          note: "Prevalence-dependent; report alongside prevalence"
+
+        npv:
+          definition: "Negative Predictive Value: probability of no disease given negative test"
+          formula: "NPV = TN / (TN + FN)"
+
+        lr_positive:
+          definition: "Likelihood Ratio Positive: how much positive test increases disease probability"
+          formula: "LR+ = Se / (1 - Sp)"
+          interpretation: ">10 strong; 5-10 moderate; <2 weak"
+          plausibility: {min: 1, max: 1000}
+
+        lr_negative:
+          definition: "Likelihood Ratio Negative: how much negative test decreases disease probability"
+          formula: "LR- = (1 - Se) / Sp"
+          interpretation: "<0.1 strong; 0.1-0.2 moderate; >0.5 weak"
+          plausibility: {min: 0.001, max: 1}
+
+        auc_roc:
+          definition: "Area Under ROC Curve: overall discriminative ability"
+          formula: "AUC = integral of ROC curve; AUROC=0.5 chance, =1.0 perfect"
+          unit: "0-1"
+          aliases: ["AUC", "AUROC", "c-statistic"]
+          plausibility: {min: 0.5, max: 1.0}
+
+        dor:
+          definition: "Diagnostic Odds Ratio: single summary measure of diagnostic accuracy"
+          formula: "DOR = (TP×TN) / (FP×FN) = LR+ / LR-"
+          synthesis_method: "Log-DOR in random-effects model; SROC curve"
+
+      synthesis_approach:
+        bivariate_model:
+          description: "Joint modelling of sensitivity and specificity; preferred method (Cochrane DTA)"
+          software: "R package: mada, reitsma()"
+        sroc_curve:
+          description: "Summary ROC curve from DOR-based synthesis"
+          software: "R package: mada, sroc()"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      metric_definition: {type: object}
+
+validation: []
+
+manifest:
+  purpose: "Diagnostic accuracy metrics reference: Se/Sp/AUC/LR+/LR-/DOR definitions and formulas"
+  key_constraints:
+    - "Extract TP/FP/TN/FN (or 2×2 table) as primary data for diagnostic reviews"
+    - "PPV/NPV are prevalence-dependent; report alongside prevalence"
+    - "Use bivariate model for meta-analysis of Se and Sp jointly"
+    - "AUC plausibility range: 0.5-1.0"
+  output_type: "L3 reference for diagnostic accuracy extraction"

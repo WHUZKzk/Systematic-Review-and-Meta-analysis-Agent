@@ -1,0 +1,455 @@
+# ============================================================
+# Meta-Skill: PRISMA 2020 Therapeutic Intervention SR & MA
+# Version: 1.0.0
+# ============================================================
+
+meta_skill_id: "PRISMA_2020_therapeutic"
+version: "1.0.0"
+applicable_to: "Systematic reviews and meta-analyses of therapeutic interventions (primarily RCTs)"
+evidence_base: "PRISMA 2020 Statement; Cochrane Handbook v6.4"
+
+# ============================
+# Stage Definitions
+# ============================
+
+stages:
+
+  # ─────────────── Stage 1: Search ───────────────
+  - stage_id: "search"
+    stage_name: "Literature Search and Candidate Pool Construction"
+    agent_type: "executor"
+
+    step_sequence:
+      - step_id: "search_step_1"
+        skill_id: "search.pico_term_generation"
+        tools_required: []
+        requires_llm: true
+        input_from: "human_input"
+        output_to: "next_step"
+        description: "Generate PICO four-dimension search term table from research question"
+
+      - step_id: "search_step_2"
+        skill_id: "search.mesh_validation_protocol"
+        tools_required: ["mesh_validator"]
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Batch MeSH term API validation and annotation"
+
+      - step_id: "search_step_3"
+        skill_id: "search.boolean_query_construction"
+        tools_required: []
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Assemble PubMed Boolean query by rules"
+
+      - step_id: "search_step_4"
+        skill_id: null
+        tools_required: ["pubmed_search", "abstract_fetcher"]
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Execute PubMed search and fetch Top-K article metadata"
+
+      - step_id: "search_step_5"
+        skill_id: "search.search_augmentation"
+        tools_required: ["mesh_validator"]
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "PICO-dimension-aware targeted search augmentation"
+
+      - step_id: "search_step_6"
+        skill_id: "search.search_self_check"
+        tools_required: ["mesh_validator"]
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Term merging + final query construction + search self-check"
+
+      - step_id: "search_step_7"
+        skill_id: "search.reference_chaining"
+        tools_required: ["citation_fetcher"]
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Backward citation chaining (co-citation frequency counting and filtering)"
+
+      - step_id: "search_step_8"
+        skill_id: null
+        tools_required: []
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "stage_output"
+        description: "Final merge, deduplication, and search report generation"
+
+    llm_assignment:
+      primary: "default"
+      secondary: null
+      adjudicator: null
+
+    human_checkpoints: []
+
+  # ─────────────── Stage 2: Screening ───────────────
+  - stage_id: "screening"
+    stage_name: "Literature Screening"
+    agent_type: "dual_review"
+
+    step_sequence:
+      - step_id: "screening_step_1_criteria"
+        skill_id: "screening.eligibility_criteria_design"
+        tools_required: []
+        requires_llm: true
+        input_from: "stage_input"
+        output_to: "context_store"
+        description: "Generate PICO-dimension inclusion criteria and binary eligibility questions under Skill framework constraints"
+
+      - step_id: "screening_step_1_5_prefilter"
+        skill_id: null
+        tools_required: []
+        requires_llm: false
+        input_from: "stage_input"
+        output_to: "next_step"
+        description: "Deterministic pre-filtering based on publication type/year/language"
+
+      - step_id: "screening_step_2a_title"
+        skill_id: "screening.screening_decision_logic"
+        tools_required: []
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Dual-review title screening (ReviewerAgent-alpha and beta in parallel)"
+
+      - step_id: "screening_step_2b_abstract"
+        skill_id: "screening.screening_decision_logic"
+        tools_required: []
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Dual-review abstract screening (ReviewerAgent-alpha and beta in parallel)"
+
+      - step_id: "screening_step_3_agreement"
+        skill_id: "screening.dual_review_aggregation"
+        tools_required: []
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Dual-review agreement comparison + Cohen's Kappa calculation + triage"
+
+      - step_id: "screening_step_4_adjudication"
+        skill_id: "screening.adjudication_protocol"
+        tools_required: []
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Third-party LLM adjudication of disagreement items"
+
+      - step_id: "screening_step_5_report"
+        skill_id: null
+        tools_required: []
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "stage_output"
+        description: "PRISMA flowchart data + agreement analysis + exclusion reason summary"
+
+    llm_assignment:
+      primary: "reviewer_a"
+      secondary: "reviewer_b"
+      adjudicator: "adjudicator"
+
+    human_checkpoints:
+      - timing: "after_step_screening_step_1_criteria"
+        blocking: true
+        condition: "always"
+        deliverable: "unified_criteria (inclusion criteria set + binary eligibility questions + decision guidance)"
+
+  # ─────────────── Stage 3: Data Extraction ───────────────
+  - stage_id: "extraction"
+    stage_name: "Data Extraction and Standardization"
+    agent_type: "executor_verified"
+
+    step_sequence:
+      - step_id: "extraction_step_1_schema"
+        skill_id: "extraction.extraction_schema_design"
+        tools_required: []
+        requires_llm: true
+        input_from: "stage_input"
+        output_to: "context_store"
+        description: "Design extraction schema based on PICO dimensions and outcome types"
+
+      - step_id: "extraction_step_2_fulltext"
+        skill_id: null
+        tools_required: ["fulltext_fetcher"]
+        requires_llm: false
+        input_from: "stage_input"
+        output_to: "next_step"
+        description: "Fetch full-text for included studies (PMC XML or PDF fallback)"
+
+      - step_id: "extraction_step_3_extract"
+        skill_id: "extraction.data_extraction_protocol"
+        tools_required: []
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Extract structured data from full-text using extraction schema"
+
+      - step_id: "extraction_step_4_validate"
+        skill_id: "extraction.extraction_validation"
+        tools_required: []
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Validate extracted data for completeness and consistency"
+
+      - step_id: "extraction_step_5_rob"
+        skill_id: "extraction.rob2_assessment"
+        tools_required: []
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Risk of bias assessment using RoB 2 tool"
+
+      - step_id: "extraction_step_6_report"
+        skill_id: null
+        tools_required: []
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "stage_output"
+        description: "Compile extraction table and RoB summary"
+
+    llm_assignment:
+      primary: "default"
+      secondary: null
+      adjudicator: null
+
+    human_checkpoints:
+      - timing: "after_step_extraction_step_1_schema"
+        blocking: true
+        condition: "always"
+        deliverable: "extraction_schema (field definitions, outcome mapping, units)"
+
+  # ─────────────── Stage 4: Synthesis ───────────────
+  - stage_id: "synthesis"
+    stage_name: "Evidence Synthesis and Meta-Analysis"
+    agent_type: "executor"
+
+    step_sequence:
+      - step_id: "synthesis_step_1_plan"
+        skill_id: "synthesis.synthesis_plan"
+        tools_required: []
+        requires_llm: true
+        input_from: "stage_input"
+        output_to: "context_store"
+        description: "Develop synthesis plan: groupings, effect measure selection, heterogeneity approach"
+
+      - step_id: "synthesis_step_2_prepare"
+        skill_id: "synthesis.data_preparation"
+        tools_required: []
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Prepare and harmonize data for meta-analysis (unit conversion, imputation)"
+
+      - step_id: "synthesis_step_3_meta"
+        skill_id: "synthesis.meta_analysis_execution"
+        tools_required: ["r_engine"]
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Execute meta-analysis models via R (random/fixed effects, heterogeneity stats)"
+
+      - step_id: "synthesis_step_4_heterogeneity"
+        skill_id: "synthesis.heterogeneity_analysis"
+        tools_required: ["r_engine"]
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Subgroup analysis and meta-regression for heterogeneity exploration"
+
+      - step_id: "synthesis_step_5_bias"
+        skill_id: "synthesis.publication_bias"
+        tools_required: ["r_engine"]
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "Funnel plot, Egger's test, and publication bias assessment"
+
+      - step_id: "synthesis_step_6_certainty"
+        skill_id: "synthesis.grade_certainty"
+        tools_required: []
+        requires_llm: true
+        input_from: "previous_step"
+        output_to: "next_step"
+        description: "GRADE certainty of evidence assessment per outcome"
+
+      - step_id: "synthesis_step_7_report"
+        skill_id: null
+        tools_required: []
+        requires_llm: false
+        input_from: "previous_step"
+        output_to: "stage_output"
+        description: "Generate synthesis report with forest plots and summary of findings table"
+
+    llm_assignment:
+      primary: "default"
+      secondary: null
+      adjudicator: null
+
+    human_checkpoints:
+      - timing: "after_step_synthesis_step_1_plan"
+        blocking: true
+        condition: "always"
+        deliverable: "synthesis_plan (comparison groups, effect measures, analysis strategy)"
+
+# ============================
+# Inter-Stage Data Contracts
+# ============================
+
+data_contracts:
+  - from_stage: "search"
+    to_stage: "screening"
+    required_fields:
+      - field_name: "candidate_pool"
+        field_type: "reference"
+        max_tokens: null
+        description: "List of candidate papers with pmid, title, abstract, pub_type, pub_year, language"
+      - field_name: "pico_terms"
+        field_type: "value"
+        max_tokens: 500
+        description: "Validated PICO term table for criteria generation"
+      - field_name: "search_report"
+        field_type: "summary"
+        max_tokens: 300
+        description: "Search execution summary (query used, total hits, dedup count)"
+    optional_fields:
+      - field_name: "main_query"
+        condition: "always"
+
+  - from_stage: "screening"
+    to_stage: "extraction"
+    required_fields:
+      - field_name: "included_studies"
+        field_type: "reference"
+        max_tokens: null
+        description: "List of included studies (pmid, title, abstract, inclusion rationale)"
+      - field_name: "eligibility_criteria"
+        field_type: "value"
+        max_tokens: 800
+        description: "Finalized eligibility criteria used during screening"
+      - field_name: "screening_report"
+        field_type: "summary"
+        max_tokens: 300
+        description: "PRISMA flow counts and kappa statistics"
+    optional_fields:
+      - field_name: "uncertain_studies"
+        condition: "when uncertain_count > 0"
+
+  - from_stage: "extraction"
+    to_stage: "synthesis"
+    required_fields:
+      - field_name: "extraction_table"
+        field_type: "reference"
+        max_tokens: null
+        description: "Structured extraction data for all included studies"
+      - field_name: "rob_summary"
+        field_type: "value"
+        max_tokens: 600
+        description: "Risk of bias assessment summary across studies"
+      - field_name: "extraction_schema"
+        field_type: "value"
+        max_tokens: 400
+        description: "Field definitions and outcome mapping used during extraction"
+    optional_fields:
+      - field_name: "extraction_warnings"
+        condition: "when any field has low_confidence"
+
+# ============================
+# Quality Gates
+# ============================
+
+quality_gates:
+  - stage_id: "search"
+    timing: "after_stage"
+    metric: "candidate_pool_size"
+    threshold: 20
+    operator: ">="
+    on_pass: "continue"
+    on_fail: "warn_and_continue"
+    description: "Minimum candidate pool size to proceed with screening"
+
+  - stage_id: "search"
+    timing: "after_stage"
+    metric: "pico_dimensions_covered"
+    threshold: 2
+    operator: ">="
+    on_pass: "continue"
+    on_fail: "warn_and_continue"
+    description: "At least P and I dimensions must have validated terms"
+
+  - stage_id: "screening"
+    timing: "after_step_screening_step_3_agreement"
+    metric: "kappa"
+    threshold: 0.40
+    operator: ">="
+    on_pass: "continue"
+    on_fail: "block_until_human"
+    description: "Minimum acceptable inter-rater reliability; below 0.40 requires calibration"
+
+  - stage_id: "screening"
+    timing: "after_stage"
+    metric: "included_count"
+    threshold: 3
+    operator: ">="
+    on_pass: "continue"
+    on_fail: "block_until_human"
+    description: "Minimum included studies for meaningful synthesis"
+
+  - stage_id: "extraction"
+    timing: "after_stage"
+    metric: "extraction_completeness_rate"
+    threshold: 0.80
+    operator: ">="
+    on_pass: "continue"
+    on_fail: "warn_and_continue"
+    description: "At least 80% of key fields extracted across included studies"
+
+  - stage_id: "synthesis"
+    timing: "after_step_synthesis_step_3_meta"
+    metric: "studies_in_meta"
+    threshold: 2
+    operator: ">="
+    on_pass: "continue"
+    on_fail: "warn_and_continue"
+    description: "Minimum studies to compute pooled estimates"
+
+# ============================
+# Feedback Loops
+# ============================
+
+feedback_loops:
+  - loop_id: "search_augmentation_loop"
+    trigger_stage: "screening"
+    trigger_condition: "included_count < 5 and search_augmented == false"
+    target_stage: "search"
+    target_action: "re_run_with_expanded_terms"
+    max_iterations: 1
+    description: "If too few studies pass screening, revisit search with broader terms"
+
+  - loop_id: "criteria_revision_loop"
+    trigger_stage: "screening"
+    trigger_condition: "kappa < 0.40 and calibration_requested == true"
+    target_stage: "screening"
+    target_action: "revise_criteria_and_restart"
+    max_iterations: 2
+    description: "If kappa is too low, revise eligibility criteria and re-run screening"
+
+# ============================
+# Global Error Policy
+# ============================
+
+error_policy:
+  llm_call_timeout_seconds: 120
+  llm_call_max_retries: 2
+  tool_call_max_retries: 3
+  on_unrecoverable_error: "halt_and_notify"

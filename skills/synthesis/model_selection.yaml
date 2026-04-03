@@ -1,0 +1,100 @@
+skill_id: "synthesis.model_selection"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.10.10; Borenstein et al. 2009"
+description: "Select fixed-effect or random-effects model based on statistical and clinical heterogeneity evidence."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_3_meta"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "heterogeneity_stats"
+    source: "skill_output"
+    description: "I², Q-test p-value, tau² from preliminary analysis"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 600
+  content:
+    entry_point: "default_to_random_effects"
+    nodes:
+      - node_id: "default_to_random_effects"
+        condition: >
+          Current Cochrane guidance (2019) recommends random-effects as the default
+          when studies represent a sample from a population of interventions/settings.
+          For SR & MA, always start with random-effects unless ALL conditions for FE are met.
+        branches:
+          - match: "random_effects_default"
+            action: "go_to: check_fe_conditions"
+
+      - node_id: "check_fe_conditions"
+        condition: "Are ALL of the following true? (1) Studies are near-identical in design, population, intervention; (2) I²=0 and Q-test p>0.10; (3) The goal is to estimate the common true effect"
+        branches:
+          - match: "all_conditions_met"
+            action: "select: fixed_effect — note this is exceptional; document justification"
+          - match: "conditions_not_met"
+            action: "select: random_effects — report pooled effect with prediction interval"
+
+    model_properties:
+      random_effects:
+        description: "Assumes true effects vary across studies; estimates average effect"
+        reports: ["pooled estimate", "95% CI", "prediction interval", "I²", "tau²", "Q-test"]
+        suitable_when: "Studies differ in populations, settings, or intervention details"
+        r_implementation: "method='REML', hakn=TRUE"
+
+      fixed_effect:
+        description: "Assumes all studies share a single true effect"
+        reports: ["pooled estimate", "95% CI", "Q-test"]
+        suitable_when: "All studies nearly identical; estimating specific common effect"
+        r_implementation: "method='FE'"
+        caution: "Results not generalizable beyond the exact study conditions"
+
+    prediction_interval_guidance:
+      description: >
+        For random-effects models, always report the 95% prediction interval (PI).
+        PI captures the range in which a future study's effect would be expected to fall.
+        A wide PI indicates high heterogeneity even if the pooled estimate is significant.
+      formula: "PI = theta ± t_{k-2, 0.975} × sqrt(tau² + SE²_theta)"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["model_decisions"]
+    properties:
+      model_decisions:
+        type: array
+        items:
+          outcome_id: {type: string}
+          selected_model: {type: string, enum: ["random_effects", "fixed_effect"]}
+          i2_observed: {type: number, description: "Preliminary I² if available"}
+          q_test_p: {type: number}
+          report_prediction_interval: {type: boolean}
+          model_reasoning: {type: string}
+  example:
+    model_decisions:
+      - outcome_id: "primary_sbp"
+        selected_model: "random_effects"
+        i2_observed: 45.2
+        q_test_p: 0.08
+        report_prediction_interval: true
+        model_reasoning: "Moderate heterogeneity (I²=45%); studies vary in exercise type and duration → random-effects with PI"
+
+validation:
+  - rule_id: "valid_model"
+    description: "Selected model must be random_effects or fixed_effect"
+    expression: "all(d.get('selected_model') in ['random_effects','fixed_effect'] for d in output.get('model_decisions',[]))"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Select fixed-effect or random-effects model; mandate PI reporting for random-effects"
+  key_constraints:
+    - "Default to random-effects; use fixed-effect only if all homogeneity conditions met"
+    - "Always report prediction interval for random-effects models"
+    - "Document justification for any fixed-effect decision"
+    - "Report I², Q-test p, and tau² in model decisions"
+  output_type: "JSON model selection per outcome group with reasoning and PI flag"

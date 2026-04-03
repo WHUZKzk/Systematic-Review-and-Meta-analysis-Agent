@@ -1,0 +1,150 @@
+# ============================================================
+# Skill: screening.adjudication_protocol  (A2.11)
+# ============================================================
+
+skill_id: "screening.adjudication_protocol"
+version: "1.0.0"
+domain: "screening"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4, Ch.4.6.2 (Resolving disagreements)"
+description: >
+  Decision protocol for AdjudicatorAgent to resolve dual-review disagreements.
+  The adjudicator sees both reviewers' full reasoning but does not know which is A or B.
+  Final decision: INCLUDE (Tier-2, needs full text confirmation) or EXCLUDE.
+
+trigger:
+  stage: "screening"
+  step: "screening_step_4_adjudication"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "disagreement_item"
+    source: "stage_output"
+    description: "Single disagreement: {pmid, title, abstract, reviewer_1_decision, reviewer_1_reasoning, reviewer_1_criteria, reviewer_2_decision, reviewer_2_reasoning, reviewer_2_criteria, disagreement_type}"
+  - context_key: "eligibility_criteria"
+    source: "stage_output"
+    description: "The confirmed eligibility criteria and binary questions"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 700
+  content:
+    entry_point: "analyze_disagreement"
+    nodes:
+      - node_id: "analyze_disagreement"
+        description: "Step 1: Identify the source of disagreement"
+        analysis_steps:
+          - "List all criteria where the two reviewers disagreed"
+          - "For each disagreed criterion: what evidence does each reviewer cite?"
+          - "Classify the disagreement type:"
+          - "  (a) Information gap — one reviewer found information the other missed"
+          - "  (b) Interpretation difference — both saw the same information but interpreted differently"
+          - "  (c) Standard ambiguity — the criterion itself is unclear"
+        action: "go_to: apply_eligibility_criteria"
+
+      - node_id: "apply_eligibility_criteria"
+        description: "Step 2: Apply the eligibility criteria directly to the paper content"
+        rules:
+          - "Re-read the title and abstract carefully with the eligibility criteria in mind"
+          - "For each criterion that is in dispute: assess YES/NO/UNCERTAIN independently"
+          - "Do NOT simply adopt the more conservative reviewer's decision"
+          - "Look for the most relevant sentence in the abstract that resolves each dispute"
+        action: "go_to: make_decision"
+
+      - node_id: "make_decision"
+        description: "Step 3: Reach the final decision"
+        decision_rules:
+          INCLUDE_Tier2:
+            condition: "Paper plausibly meets all criteria based on available information, but some uncertainty remains"
+            note: "Tier-2 INCLUDE = retain for full-text review"
+          EXCLUDE:
+            condition: "At least one criterion is clearly not met based on title/abstract"
+            note: "Must cite specific evidence from the abstract"
+        tie_breaking:
+            rule: "When genuinely uncertain after careful analysis: INCLUDE Tier-2 (err on side of inclusion at this stage)"
+            rationale: "False exclusions are worse than false inclusions at abstract stage; full-text review is the next gate"
+        action: "terminal: output_adjudication"
+
+    terminal_actions:
+      - id: "output_adjudication"
+        output_fields: ["final_decision", "chosen_reasoning", "dissent_note", "evidence_used"]
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["pmid", "final_decision", "chosen_reasoning", "dissent_note", "evidence_used"]
+    properties:
+      pmid:
+        type: string
+      final_decision:
+        type: string
+        enum: ["INCLUDE_Tier2", "EXCLUDE"]
+        description: "INCLUDE_Tier2 = retained for full-text review; EXCLUDE = definitively excluded"
+      criteria_assessment:
+        type: array
+        description: "Adjudicator's independent per-criterion assessment"
+        items:
+          type: object
+          required: ["criterion_id", "answer", "evidence"]
+          properties:
+            criterion_id: {type: string}
+            answer:       {type: string, enum: ["YES", "NO", "UNCERTAIN"]}
+            evidence:     {type: string}
+      chosen_reasoning:
+        type: string
+        description: "Explanation of why the adjudicator reached this decision, citing evidence from the abstract"
+      dissent_note:
+        type: string
+        description: "Why the opposing reviewer's reasoning was not adopted (specific rebuttal, not vague)"
+      evidence_used:
+        type: string
+        description: "Key sentence(s) from title/abstract that were decisive"
+      disagreement_source:
+        type: string
+        description: "Classification of the disagreement: information_gap | interpretation_difference | standard_ambiguity"
+  example:
+    pmid: "56789012"
+    final_decision: "INCLUDE_Tier2"
+    criteria_assessment:
+      - criterion_id: "study_design"
+        answer: "UNCERTAIN"
+        evidence: "The abstract states 'randomized' but does not specify if it is a full RCT or a pilot"
+    chosen_reasoning: "Reviewer 1 is correct that the abstract mentions randomization. While the design is not fully clarified, this warrants full-text review."
+    dissent_note: "Reviewer 2's UNCERTAIN decision was too conservative — the abstract provides sufficient evidence of randomization to merit inclusion at this stage."
+    evidence_used: "The study used a randomized design with participants assigned to intervention or control groups"
+    disagreement_source: "interpretation_difference"
+
+validation:
+  - rule_id: "valid_final_decision"
+    description: "final_decision must be INCLUDE_Tier2 or EXCLUDE"
+    expression: "isinstance(output, dict) and output.get('final_decision') in ['INCLUDE_Tier2', 'EXCLUDE']"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "chosen_reasoning_nonempty"
+    description: "chosen_reasoning must be present and non-empty"
+    expression: "isinstance(output, dict) and len(output.get('chosen_reasoning', '').strip()) > 10"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "dissent_note_nonempty"
+    description: "dissent_note must explain why the other reviewer's reasoning was not adopted"
+    expression: "isinstance(output, dict) and len(output.get('dissent_note', '').strip()) > 10"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "evidence_used_nonempty"
+    description: "evidence_used must cite specific content from the paper"
+    expression: "isinstance(output, dict) and len(output.get('evidence_used', '').strip()) > 5"
+    severity: soft
+    on_fail: flag_human
+
+manifest:
+  purpose: "Resolve dual-review disagreements with a structured 3-step protocol: analyze → re-apply criteria → decide"
+  key_constraints:
+    - "Adjudicator uses a THIRD independent LLM backend — not reviewer_a or reviewer_b"
+    - "When genuinely uncertain after analysis: prefer INCLUDE_Tier2 (err on inclusion side)"
+    - "Must provide both chosen_reasoning (why decided) and dissent_note (why other view rejected)"
+    - "EXCLUDE must cite specific evidence from abstract proving criterion failure"
+  output_type: "JSON per item: {pmid, final_decision, criteria_assessment, chosen_reasoning, dissent_note, evidence_used}"

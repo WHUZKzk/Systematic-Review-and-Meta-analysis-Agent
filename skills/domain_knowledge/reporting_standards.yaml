@@ -1,0 +1,91 @@
+skill_id: "domain_knowledge.reporting_standards"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "domain_knowledge"
+evidence_base: "Page et al. 2021 PRISMA 2020 (BMJ); Rethlefsen et al. 2021 PRISMA-S (Syst Rev)"
+description: "Reference knowledge of PRISMA 2020 and PRISMA-S reporting standards for systematic reviews."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_7_report"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: schema
+  token_budget: 500
+  content:
+    instruction: "Reference PRISMA 2020 checklist items and PRISMA-S search reporting standards."
+    schema_definition:
+      prisma_2020_key_items:
+        title_and_abstract:
+          - "SR-1: Identify as SR (and MA if applicable) in title"
+          - "SR-2: Abstract: objective, eligibility criteria, sources, methods, results, limitations, conclusions"
+        introduction:
+          - "SR-3: Rationale for review"
+          - "SR-4: Explicit review objectives and PICO question"
+        methods:
+          - "SR-5: Protocol registration (PROSPERO/OSF); state if deviations"
+          - "SR-6: Eligibility criteria (PICO, study design, language, date)"
+          - "SR-7: Information sources (databases, registers, grey literature)"
+          - "SR-8: Full search strategies for each database (PRISMA-S)"
+          - "SR-9: Selection process (number of reviewers, independence, resolution)"
+          - "SR-10: Data collection (forms, software, who extracted, validation)"
+          - "SR-11: List of items extracted"
+          - "SR-12: Risk of bias assessment method per study"
+          - "SR-13: Effect measure(s) for each outcome"
+          - "SR-14: Synthesis methods (eligibility, presentation, pooling, CI, heterogeneity)"
+          - "SR-15: Sensitivity analyses"
+          - "SR-16: Reporting bias assessment"
+          - "SR-17: Certainty of evidence assessment (GRADE)"
+        results:
+          - "SR-18: PRISMA flow diagram (records identified, screened, assessed, included)"
+          - "SR-19: Risk of bias per study and overall"
+          - "SR-20: All effect estimates with CI for included studies"
+          - "SR-21: Forest plots for all meta-analyses"
+          - "SR-22: Heterogeneity statistics (I², tau², Q) per synthesis"
+          - "SR-23: Subgroup and sensitivity analyses results"
+          - "SR-24: Publication bias assessment (funnel plot, Egger)"
+          - "SR-25: Summary of findings table (GRADE)"
+
+      prisma_flow_counts_required:
+        - "Records identified from databases"
+        - "Records removed before screening (duplicates)"
+        - "Records screened"
+        - "Records excluded"
+        - "Reports sought for retrieval"
+        - "Reports not retrieved"
+        - "Reports assessed for eligibility"
+        - "Reports excluded (with reasons)"
+        - "Studies included in review"
+        - "Studies included in meta-analysis"
+
+      prisma_s_search_checklist:
+        - "S1: Name all databases searched with dates"
+        - "S2: Full Boolean search strings for each database"
+        - "S3: Date range of search (start/end)"
+        - "S4: Search filters used (RCT, date, language)"
+        - "S5: Grey literature sources searched"
+        - "S6: Reference list screening of included studies"
+        - "S7: Citation searching (forward/backward)"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      compliance_check:
+        type: object
+        description: "Per-item compliance status for the review being generated"
+
+validation: []
+
+manifest:
+  purpose: "PRISMA 2020 and PRISMA-S reporting standards reference for report generation"
+  key_constraints:
+    - "Include PRISMA flow diagram with all 10 required counts"
+    - "Report forest plots for all pooled analyses"
+    - "GRADE summary of findings table required per primary outcome"
+    - "Full search strings must be in methods section (PRISMA-S S2)"
+  output_type: "L3 reference; loaded during report generation"

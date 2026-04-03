@@ -1,0 +1,145 @@
+skill_id: "domain_knowledge.endpoint_definitions"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "domain_knowledge"
+evidence_base: "WHO ICD-11; Buyse et al. 2010; FDA Guidance on Clinical Endpoints"
+description: "Reference library of common clinical endpoint definitions, measurement types, plausibility ranges, and reporting aliases."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_3_extract"
+  disclosure_level: "L3_reference"
+
+required_context: []
+
+decision_protocol:
+  type: schema
+  token_budget: 500
+  content:
+    instruction: "Look up the relevant endpoint definition for validation and plausibility checking."
+    schema_definition:
+      endpoints:
+        OS:
+          full_name: "Overall Survival"
+          definition: "Time from randomization to death from any cause"
+          outcome_type: "time_to_event"
+          effect_measure: "HR"
+          unit: "months or years"
+          direction_of_benefit: "higher_better (longer survival)"
+          plausibility_range:
+            median_os_months: [1, 120]
+            hr: [0.3, 1.5]
+          reporting_aliases: ["overall survival", "OS", "all-cause mortality", "time to death"]
+
+        PFS:
+          full_name: "Progression-Free Survival"
+          definition: "Time from randomization to disease progression or death from any cause"
+          outcome_type: "time_to_event"
+          effect_measure: "HR"
+          unit: "months"
+          direction_of_benefit: "higher_better"
+          plausibility_range:
+            median_pfs_months: [0.5, 60]
+            hr: [0.3, 1.5]
+          reporting_aliases: ["PFS", "progression-free survival", "time to progression", "TTP"]
+
+        ORR:
+          full_name: "Objective Response Rate"
+          definition: "Proportion of patients with complete or partial response"
+          outcome_type: "binary"
+          effect_measure: "OR or RR"
+          unit: "proportion (0-1)"
+          direction_of_benefit: "higher_better"
+          plausibility_range:
+            rate: [0.01, 0.99]
+          reporting_aliases: ["ORR", "response rate", "objective response", "tumor response rate"]
+
+        SBP:
+          full_name: "Systolic Blood Pressure"
+          definition: "Peak arterial pressure during systole, measured by sphygmomanometer"
+          outcome_type: "continuous"
+          effect_measure: "MD"
+          unit: "mmHg"
+          direction_of_benefit: "lower_better"
+          plausibility_range:
+            mean: [70, 220]
+            sd: [3, 40]
+            change_from_baseline: [-60, 30]
+          mcid: 4
+          reporting_aliases: ["SBP", "systolic BP", "systolic blood pressure", "systolic pressure"]
+
+        DBP:
+          full_name: "Diastolic Blood Pressure"
+          definition: "Minimum arterial pressure during diastole"
+          outcome_type: "continuous"
+          effect_measure: "MD"
+          unit: "mmHg"
+          direction_of_benefit: "lower_better"
+          plausibility_range:
+            mean: [40, 140]
+            sd: [2, 25]
+            change_from_baseline: [-40, 20]
+          mcid: 3
+          reporting_aliases: ["DBP", "diastolic BP", "diastolic blood pressure"]
+
+        HbA1c:
+          full_name: "Glycated Haemoglobin"
+          definition: "Average blood glucose over ~3 months; percentage of haemoglobin with attached glucose"
+          outcome_type: "continuous"
+          effect_measure: "MD"
+          unit: "% or mmol/mol"
+          direction_of_benefit: "lower_better"
+          plausibility_range:
+            mean_pct: [4.0, 15.0]
+            sd_pct: [0.2, 3.0]
+          mcid: 0.5
+          reporting_aliases: ["HbA1c", "A1c", "glycated hemoglobin", "glycohaemoglobin"]
+
+        BMI:
+          full_name: "Body Mass Index"
+          definition: "Weight (kg) / height (m²)"
+          outcome_type: "continuous"
+          effect_measure: "MD"
+          unit: "kg/m²"
+          direction_of_benefit: "lower_better (typically)"
+          plausibility_range:
+            mean: [15, 60]
+            sd: [1, 10]
+          mcid: 1.0
+          reporting_aliases: ["BMI", "body mass index", "body-mass index"]
+
+        FEV1:
+          full_name: "Forced Expiratory Volume in 1 second"
+          definition: "Volume of air expelled in first second of forced exhalation"
+          outcome_type: "continuous"
+          effect_measure: "MD"
+          unit: "L or % predicted"
+          direction_of_benefit: "higher_better"
+          plausibility_range:
+            mean_L: [0.5, 5.5]
+            sd_L: [0.1, 1.5]
+          reporting_aliases: ["FEV1", "FEV₁", "forced expiratory volume"]
+
+        plausibility_ranges:
+          description: "Used by three_layer_validation for L3 clinical plausibility checks"
+          note: "If outcome not listed, flag for manual review"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    properties:
+      lookup_result:
+        type: object
+        description: "Definition entry for the requested endpoint"
+
+validation: []
+
+manifest:
+  purpose: "Reference library of clinical endpoint definitions, units, plausibility ranges, and aliases"
+  key_constraints:
+    - "Check plausibility_range when validating extracted values"
+    - "Use reporting_aliases to recognize endpoint variants in text"
+    - "MCID values guide clinical interpretation in evidence summary"
+    - "If endpoint not in library, note as 'not in reference library'"
+  output_type: "L3 reference; loaded on-demand during extraction validation"

@@ -1,0 +1,240 @@
+# ============================================================
+# Skill: screening.eligibility_criteria_design  (A2.7)
+# ============================================================
+
+skill_id: "screening.eligibility_criteria_design"
+version: "1.0.0"
+domain: "screening"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4, Ch.3.2 (Defining criteria for including studies)"
+description: >
+  Generate structured inclusion/exclusion criteria from the PICO research question.
+  Output criteria as binary yes/no questions suitable for systematic screening.
+  Single ExecutorAgent with PICO template + human confirmation checkpoint.
+
+trigger:
+  stage: "screening"
+  step: "screening_step_1_criteria"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "review_question"
+    source: "human_input"
+    description: "Structured PICO research question (P, I, C, O natural language descriptions)"
+  - context_key: "pico_terms"
+    source: "stage_output"
+    description: "Validated PICO term table from the search stage"
+
+decision_protocol:
+  type: template
+  token_budget: 900
+  content:
+    instruction: >
+      You are a systematic review methodologist. Generate precise, operationalizable eligibility
+      criteria from the PICO research question. Each criterion must be converted into a binary
+      yes/no question that a screener can answer using only the title and abstract.
+      Follow the PICOS framework (Population, Intervention, Comparison, Outcome, Study design).
+
+    template_sections:
+      - section: "Population Criterion"
+        prompt: >
+          Define the target population. Specify: age range (if applicable), health status or
+          condition, setting. Write one clear inclusion definition and its binary screening question.
+        constraints:
+          - "The binary_question must be answerable YES/NO from title/abstract alone"
+          - "Use explicit, measurable criteria (e.g., 'adults aged ≥18 years' not 'adults')"
+          - "State what is included, not just what is excluded"
+        output_fields: ["definition", "binary_question"]
+
+      - section: "Intervention Criterion"
+        prompt: >
+          Define the target intervention(s). Specify the type, delivery mode, and any minimum
+          requirements (e.g., must include a specific component). Include all relevant synonyms
+          and variants that should be counted as the target intervention.
+        constraints:
+          - "Be specific enough to exclude adjacent but non-target interventions"
+          - "The binary_question should capture the core defining feature of the intervention"
+        output_fields: ["definition", "binary_question"]
+
+      - section: "Comparison Criterion"
+        prompt: >
+          Define acceptable comparators. If the review accepts any comparator (active or inactive
+          control), state this explicitly. If specific comparators are required or excluded, list them.
+        constraints:
+          - "If no specific comparator is required, the binary_question should be 'Does the study
+            include a control/comparison group?' or simply mark as 'no restriction'"
+        output_fields: ["definition", "binary_question"]
+
+      - section: "Outcome Criterion"
+        prompt: >
+          Define the primary outcome(s) that must be reported. Studies must measure and report
+          at least one of these outcomes to be included.
+        constraints:
+          - "List all acceptable outcome measures and units"
+          - "Specify minimum follow-up duration if required"
+        output_fields: ["definition", "binary_question"]
+
+      - section: "Study Design Criterion"
+        prompt: >
+          Specify acceptable study designs. For intervention reviews, this is typically RCTs only,
+          or RCTs plus quasi-experimental designs. State explicitly.
+        constraints:
+          - "Be explicit about whether non-randomized studies are acceptable"
+          - "Specify minimum sample size if applicable"
+        output_fields: ["definition", "binary_question"]
+
+      - section: "Additional Criteria (optional)"
+        prompt: >
+          Add any topic-specific inclusion criteria that do not fit the PICO framework
+          (e.g., minimum intervention duration, language restrictions, publication date range,
+          theoretical framework requirements). Only add if clearly necessary.
+        constraints:
+          - "Each additional criterion must have a binary_question"
+          - "Mark as optional if it applies only in ambiguous cases"
+        output_fields: ["criterion", "binary_question", "optional"]
+
+      - section: "Exclusion Criteria"
+        prompt: >
+          List the key exclusion criteria as the logical negation of inclusion criteria,
+          plus any explicit exclusions (e.g., exclude conference abstracts without full data,
+          exclude studies with n < threshold per arm).
+        constraints:
+          - "Each exclusion criterion should map to a binary_question"
+          - "Prioritize criteria that will be most useful for title/abstract screening"
+
+      - section: "Screening Guidance"
+        prompt: >
+          Write brief guidance notes for screeners covering: (1) how to handle ambiguous cases,
+          (2) what information is sufficient for 'UNCERTAIN' at title stage vs abstract stage,
+          (3) the most common reason for exclusion in this topic area.
+        constraints:
+          - "Keep guidance concise (3-5 bullet points)"
+          - "Focus on reducing inter-reviewer variability"
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["inclusion_criteria", "exclusion_criteria", "screening_guidance"]
+    properties:
+      inclusion_criteria:
+        type: object
+        required: ["population", "intervention", "outcome", "study_design"]
+        properties:
+          population:
+            type: object
+            required: ["definition", "binary_question"]
+            properties:
+              definition:      {type: string}
+              binary_question: {type: string}
+          intervention:
+            type: object
+            required: ["definition", "binary_question"]
+            properties:
+              definition:      {type: string}
+              binary_question: {type: string}
+          comparison:
+            type: object
+            properties:
+              definition:      {type: string}
+              binary_question: {type: string}
+          outcome:
+            type: object
+            required: ["definition", "binary_question"]
+            properties:
+              definition:      {type: string}
+              binary_question: {type: string}
+          study_design:
+            type: object
+            required: ["definition", "binary_question"]
+            properties:
+              definition:      {type: string}
+              binary_question: {type: string}
+          additional:
+            type: array
+            items:
+              type: object
+              required: ["criterion", "binary_question"]
+              properties:
+                criterion:       {type: string}
+                binary_question: {type: string}
+                optional:        {type: boolean, default: false}
+      exclusion_criteria:
+        type: array
+        items:
+          type: object
+          required: ["criterion", "binary_question"]
+          properties:
+            criterion:       {type: string}
+            binary_question: {type: string}
+      screening_guidance:
+        type: object
+        properties:
+          title_screen_notes:    {type: string}
+          abstract_screen_notes: {type: string}
+          common_exclusion_reason: {type: string}
+  example:
+    inclusion_criteria:
+      population:
+        definition: "Adults aged ≥55 years, regardless of baseline health status"
+        binary_question: "Does the study include participants aged 55 years or older?"
+      intervention:
+        definition: "mHealth or smartphone-based intervention targeting sedentary behavior"
+        binary_question: "Does the study evaluate a mobile health (mHealth) or smartphone application intervention?"
+      outcome:
+        definition: "Sedentary time or sitting time as a primary or secondary outcome"
+        binary_question: "Does the study measure sedentary time, sitting time, or physical activity as an outcome?"
+      study_design:
+        definition: "Randomized controlled trial (RCT)"
+        binary_question: "Is this study a randomized controlled trial (RCT)?"
+    exclusion_criteria:
+      - criterion: "Non-primary research (reviews, editorials, conference abstracts)"
+        binary_question: "Is this a primary research study (not a review or editorial)?"
+    screening_guidance:
+      title_screen_notes: "At title stage, exclude only papers that are clearly unrelated. Pass any paper mentioning mobile apps, sedentary behavior, physical activity, or older adults."
+      abstract_screen_notes: "Apply all criteria at abstract stage. Mark UNCERTAIN if the study design or outcome is not clearly reported."
+      common_exclusion_reason: "Studies targeting children/adolescents, or targeting general physical activity without sedentary behavior measurement."
+
+validation:
+  - rule_id: "pico_dimensions_nonempty"
+    description: "Population, Intervention, Outcome, and Study Design criteria must all be present"
+    expression: |
+      (isinstance(output, dict) and
+      all(
+        len(output.get('inclusion_criteria', {}).get(dim, {}).get('definition', '').strip()) > 0
+        for dim in ['population', 'intervention', 'outcome', 'study_design']
+      ))
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "all_criteria_have_binary_questions"
+    description: "Every inclusion criterion must have a non-empty binary_question"
+    expression: |
+      (isinstance(output, dict) and
+      all(
+        len(output.get('inclusion_criteria', {}).get(dim, {}).get('binary_question', '').strip()) > 0
+        for dim in ['population', 'intervention', 'outcome', 'study_design']
+      ))
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "has_exclusion_criteria"
+    description: "At least one exclusion criterion must be defined"
+    expression: "isinstance(output, dict) and len(output.get('exclusion_criteria', [])) >= 1"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "has_screening_guidance"
+    description: "Screening guidance section must be present"
+    expression: "isinstance(output, dict) and isinstance(output.get('screening_guidance'), dict)"
+    severity: soft
+    on_fail: flag_human
+
+manifest:
+  purpose: "Generate PICOS-based inclusion/exclusion criteria as binary yes/no questions for systematic screening"
+  key_constraints:
+    - "All four PICO dimensions plus Study Design must have criteria with binary questions"
+    - "Binary questions must be answerable YES/NO from title/abstract alone"
+    - "Include screening guidance to reduce inter-reviewer variability"
+    - "Human confirmation checkpoint required before proceeding to screening"
+  output_type: "JSON with inclusion_criteria (PICOS), exclusion_criteria list, and screening_guidance"

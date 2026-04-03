@@ -1,0 +1,121 @@
+skill_id: "synthesis.heterogeneity_interpretation"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.10.10.2; Higgins et al. 2003 (BMJ)"
+description: "Interpret heterogeneity statistics (I², Q, tau²) and generate hypotheses about sources of heterogeneity for subgroup/meta-regression analysis."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_4_heterogeneity"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "meta_analysis_results"
+    source: "skill_output"
+    description: "I², Q-test, tau² from meta-analysis execution"
+
+decision_protocol:
+  type: checklist
+  token_budget: 700
+  content:
+    instruction: "Interpret heterogeneity statistics and plan exploration steps."
+    items:
+      - check_id: "i2_classification"
+        question: "How should I² be classified?"
+        thresholds:
+          - range: "0-25%"
+            label: "not_important"
+            interpretation: "Little evidence of heterogeneity; pooling straightforward"
+            action: "Report as low heterogeneity; no mandatory subgroup analysis"
+          - range: "25-50%"
+            label: "moderate"
+            interpretation: "Moderate heterogeneity; explore potential sources"
+            action: "Conduct pre-specified subgroup analyses"
+          - range: "50-75%"
+            label: "substantial"
+            interpretation: "Substantial heterogeneity; pooled estimate requires caution"
+            action: "Mandatory subgroup analysis; consider prediction interval prominence"
+          - range: ">75%"
+            label: "considerable"
+            interpretation: "Considerable heterogeneity; pooled estimate may be misleading"
+            action: "Consider not pooling; report individual study effects; narrative synthesis"
+
+      - check_id: "tau2_magnitude"
+        question: "What does tau² indicate about the absolute variability?"
+        guidance: >
+          For MD: compare tau² SD units to the outcome's natural scale.
+          For SMD: tau²=0.04 (SD=0.2) is small; tau²=0.25 (SD=0.5) is moderate.
+          Report tau² with 95% CI (using Q-profile or Higgins/Thompson method).
+
+      - check_id: "q_test_interpretation"
+        question: "Is the Q-test p-value significant?"
+        guidance: >
+          Q-test has low power for small k and high power for large k.
+          Interpret in context of I²; p<0.10 threshold (not p<0.05) given low power.
+          Do not use Q-test alone — always pair with I².
+
+      - check_id: "source_hypotheses"
+        question: "What are the plausible sources of heterogeneity?"
+        guidance: >
+          Generate 2-4 hypotheses based on:
+          1. Clinical: population differences (age, severity, baseline risk)
+          2. Intervention: dose, duration, mode of delivery
+          3. Methodological: RoB, outcome measurement, follow-up duration
+          4. Setting: geographic region, healthcare system
+          Only explore pre-specified subgroups (defined a priori).
+
+    aggregation: "report_all; plan_subgroup_if_i2>25"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["heterogeneity_interpretations"]
+    properties:
+      heterogeneity_interpretations:
+        type: array
+        items:
+          outcome_id: {type: string}
+          i2: {type: number}
+          i2_category: {type: string, enum: ["not_important","moderate","substantial","considerable"]}
+          tau2: {type: number}
+          tau2_ci: {type: array}
+          q_statistic: {type: number}
+          q_df: {type: integer}
+          q_p_value: {type: number}
+          heterogeneity_narrative: {type: string}
+          source_hypotheses: {type: array, items: {type: string}}
+          subgroup_plan: {type: array, items: {type: string}}
+  example:
+    heterogeneity_interpretations:
+      - outcome_id: "primary_sbp"
+        i2: 52.4
+        i2_category: "substantial"
+        tau2: 18.6
+        tau2_ci: [4.2, 89.1]
+        q_statistic: 12.6
+        q_df: 6
+        q_p_value: 0.05
+        heterogeneity_narrative: "Substantial heterogeneity (I²=52%, p=0.05). Variability in exercise intensity and baseline SBP may contribute."
+        source_hypotheses:
+          - "Intervention duration (short <8 weeks vs. long ≥12 weeks)"
+          - "Baseline SBP severity (hypertensive vs. prehypertensive)"
+          - "Exercise modality (aerobic vs. combined)"
+        subgroup_plan: ["subgroup by duration", "subgroup by baseline SBP ≥140 vs. <140"]
+
+validation:
+  - rule_id: "category_valid"
+    description: "I² category must be valid enum"
+    expression: "all(h.get('i2_category') in ['not_important','moderate','substantial','considerable'] for h in output.get('heterogeneity_interpretations',[]))"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Interpret I²/Q/tau² heterogeneity statistics and generate subgroup hypotheses"
+  key_constraints:
+    - "Use I² thresholds: <25% not important, 25-50% moderate, 50-75% substantial, >75% considerable"
+    - "Always pair I² with Q-test and tau² in narrative"
+    - "Generate 2-4 source hypotheses for heterogeneity"
+    - "Only plan pre-specified subgroup analyses"
+  output_type: "JSON heterogeneity interpretation per outcome with subgroup plan"

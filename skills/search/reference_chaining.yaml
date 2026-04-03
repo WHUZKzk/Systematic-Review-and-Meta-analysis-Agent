@@ -1,0 +1,105 @@
+# ============================================================
+# Skill: search.reference_chaining  (A2.5)
+# ============================================================
+
+skill_id: "search.reference_chaining"
+version: "1.0.0"
+domain: "search"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4, Ch.4.4.7; Backward citation chaining methodology"
+description: "基于高相关种子文献，执行后向引文追溯（backward citation chaining），通过共引频次筛选高潜力候选文献。"
+
+trigger:
+  stage: "search"
+  step: "search_step_7"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "seed_pmids"
+    source: "stage_output"
+    description: "种子文献PMID列表（高相关、高引用的文献，通常取Top-20相关文献）"
+  - context_key: "initial_pool_pmids"
+    source: "stage_output"
+    description: "初步检索已获得的PMID集合（用于去重）"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 400
+  content:
+    instruction: |
+      引文追溯通过代码+API执行（非LLM）。本协议定义追溯规则供代码实现。
+    entry_point: "select_seed_studies"
+    nodes:
+      - node_id: "select_seed_studies"
+        condition: "从initial_pool中选择种子文献"
+        rule: "选取相关性评分最高的Top-20篇作为种子文献（或全部如总数<20）"
+        action: "go_to: backward_chaining"
+
+      - node_id: "backward_chaining"
+        condition: "对每篇种子文献获取其参考文献列表"
+        tool: "citation_fetcher (elink API)"
+        rule: "获取每篇种子文献引用的所有PMID列表"
+        action: "go_to: co_citation_count"
+
+      - node_id: "co_citation_count"
+        condition: "统计每个被引PMID被多少篇种子文献同时引用"
+        rule: "co_citation_count = 被N篇种子文献引用的次数"
+        threshold: "co_citation_count >= 2 则加入候选池（可配置，见config.CITATION_CO_CITE_THRESHOLD）"
+        action: "go_to: dedup"
+
+      - node_id: "dedup"
+        condition: "去除已在initial_pool中的PMID"
+        rule: "chaining_pool = candidate_pmids - initial_pool_pmids"
+        action: "terminal: output_chaining_pool"
+
+    terminal_actions:
+      - id: "output_chaining_pool"
+        output_field: "chaining_pool"
+        description: "输出通过引文追溯发现的新PMID列表"
+
+output_schema:
+  format: json
+  schema:
+    type: object
+    required: ["chaining_pool", "chaining_stats"]
+    properties:
+      chaining_pool:
+        type: array
+        items: {type: string}
+        description: "通过引文追溯发现的新PMID列表（已去重）"
+      chaining_stats:
+        type: object
+        properties:
+          seed_count:        {type: integer, description: "种子文献数量"}
+          references_found:  {type: integer, description: "获取到参考文献的种子文献数"}
+          total_refs:        {type: integer, description: "所有参考文献总数（去重前）"}
+          above_threshold:   {type: integer, description: "达到co-citation阈值的数量"}
+          new_candidates:    {type: integer, description: "去重后新增候选数"}
+  example:
+    chaining_pool: ["35000001", "35000002", "35000003"]
+    chaining_stats:
+      seed_count: 15
+      references_found: 13
+      total_refs: 450
+      above_threshold: 25
+      new_candidates: 3
+
+validation:
+  - rule_id: "chaining_stats_present"
+    description: "必须有chaining_stats"
+    expression: "isinstance(output, dict) and isinstance(output.get('chaining_stats'), dict)"
+    severity: hard
+    on_fail: retry
+
+bound_tools:
+  - tool_id: "citation_fetcher"
+    usage: "通过NCBI elink API获取文献的参考文献PMID列表"
+    required: true
+
+manifest:
+  purpose: "从高相关种子文献的参考文献中，通过共引频次筛选高潜力遗漏文献"
+  key_constraints:
+    - "只执行后向追溯（被种子文献引用的文献），不做前向追溯（引用种子文献的文献）"
+    - "co-citation阈值默认为2（可通过config调整）"
+    - "去重：已在初始检索池中的PMID不纳入chaining_pool"
+  output_type: "JSON格式，含chaining_pool（新PMID列表）和chaining_stats（统计信息）"

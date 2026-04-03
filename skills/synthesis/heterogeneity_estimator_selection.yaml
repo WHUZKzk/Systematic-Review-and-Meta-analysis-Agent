@@ -1,0 +1,107 @@
+skill_id: "synthesis.heterogeneity_estimator_selection"
+version: "1.0.0"
+domain: "synthesis"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.10.7; Veroniki et al. 2016; IntHout et al. 2014"
+description: "Select the heterogeneity variance estimator (tau²) and confidence interval method for random-effects meta-analysis."
+
+trigger:
+  stage: "synthesis"
+  step: "synthesis_step_1_plan"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "outcome_groups_with_feasibility"
+    source: "skill_output"
+    description: "Outcome groups routed to meta-analysis"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 600
+  content:
+    entry_point: "check_study_count"
+    nodes:
+      - node_id: "check_study_count"
+        condition: "How many studies are in this meta-analysis?"
+        branches:
+          - match: ">=10"
+            action: "go_to: recommend_reml"
+          - match: "5_to_9"
+            action: "go_to: recommend_reml_with_sensitivity"
+          - match: "<5"
+            action: "go_to: small_k_estimator"
+
+      - node_id: "recommend_reml"
+        condition: "terminal"
+        branches:
+          - match: "always"
+            action: >
+              select: REML (Restricted Maximum Likelihood).
+              Use HKSJ (Hartung-Knapp-Sidik-Jonkman) confidence interval adjustment.
+              This is the Cochrane-recommended default for k≥10.
+
+      - node_id: "recommend_reml_with_sensitivity"
+        condition: "terminal"
+        branches:
+          - match: "always"
+            action: >
+              select: REML as primary; run DerSimonian-Laird as sensitivity.
+              Apply HKSJ CI adjustment. Note: estimates less stable at k=5-9.
+
+      - node_id: "small_k_estimator"
+        condition: "Is outcome binary with rare events?"
+        branches:
+          - match: "yes_rare_binary"
+            action: "select: Paule-Mandel (PM) — performs well with sparse data"
+          - match: "no"
+            action: "select: DerSimonian-Laird (DL) — simple and commonly used for k<5"
+
+    ci_method_guidance:
+      default: "HKSJ adjustment — accounts for uncertainty in tau², especially at small k"
+      alternative: "Standard z-based CI — acceptable for large k (>30) or compatibility with older software"
+      note: "HKSJ tends to be more conservative (wider CI); recommended for randomized evidence"
+
+    tau2_interpretation:
+      REML: "Unbiased, iterative; gold standard for k≥5"
+      DL: "Moments-based; tends to underestimate tau² when true heterogeneity exists"
+      PM: "Good for binary and sparse data; recommended by Cochrane for some scenarios"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["estimator_decisions"]
+    properties:
+      estimator_decisions:
+        type: array
+        items:
+          outcome_id: {type: string}
+          study_count: {type: integer}
+          tau2_estimator: {type: string, enum: ["REML", "DL", "PM", "EB", "SJ"]}
+          ci_method: {type: string, enum: ["HKSJ", "classic_z", "profile"]}
+          sensitivity_estimator: {type: string, description: "Optional alternative for sensitivity analysis"}
+          selection_reasoning: {type: string}
+  example:
+    estimator_decisions:
+      - outcome_id: "primary_sbp"
+        study_count: 7
+        tau2_estimator: "REML"
+        ci_method: "HKSJ"
+        sensitivity_estimator: "DL"
+        selection_reasoning: "k=7, continuous outcome → REML with HKSJ; DL as sensitivity"
+
+validation:
+  - rule_id: "valid_estimator"
+    description: "Estimator must be from supported set"
+    expression: "all(d.get('tau2_estimator') in ['REML','DL','PM','EB','SJ'] for d in output.get('estimator_decisions',[]))"
+    severity: hard
+    on_fail: retry
+
+manifest:
+  purpose: "Select tau² estimator (REML/DL/PM) and CI method (HKSJ) for random-effects models"
+  key_constraints:
+    - "Default REML for k≥5; DL or PM for k<5"
+    - "Apply HKSJ CI adjustment for all random-effects analyses"
+    - "Run DL as sensitivity analysis when REML is primary"
+    - "Paule-Mandel preferred for binary outcomes with sparse data"
+  output_type: "JSON estimator decisions per outcome group"

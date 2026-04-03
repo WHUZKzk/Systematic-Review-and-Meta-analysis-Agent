@@ -1,0 +1,157 @@
+skill_id: "extraction.extraction_localization"
+version: "1.0.0"
+domain: "extraction"
+skill_type: "methodological"
+evidence_base: "Cochrane Handbook v6.4 Ch.5.3; Li et al. 2021 (BMJ)"
+description: "Precisely locate numeric data for each endpoint×arm×timepoint cell using knowledge-augmented queries and reliability-ranked source locations."
+
+trigger:
+  stage: "extraction"
+  step: "extraction_step_3_extract"
+  disclosure_level: "L2_active"
+
+required_context:
+  - context_key: "document_map"
+    source: "skill_output"
+    description: "Document map with arms, endpoints, timepoints"
+  - context_key: "full_text_sections"
+    source: "stage_output"
+    description: "Parsed full-text sections with location IDs"
+
+decision_protocol:
+  type: decision_tree
+  token_budget: 850
+  content:
+    entry_point: "build_extraction_query"
+    nodes:
+      - node_id: "build_extraction_query"
+        condition: "What outcome type is this endpoint?"
+        branches:
+          - match: "continuous"
+            action: "go_to: locate_continuous"
+          - match: "binary"
+            action: "go_to: locate_binary"
+          - match: "time_to_event"
+            action: "go_to: locate_tte"
+          - match: "rate"
+            action: "go_to: locate_rate"
+
+      - node_id: "locate_continuous"
+        condition: "terminal"
+        branches:
+          - match: "always"
+            action: >
+              Extract: mean, SD (preferred) or SE or 95%CI, n per arm.
+              Source priority: (1) Results tables → (2) Abstract → (3) Supplementary.
+              For baseline vs. follow-up: extract both if available, prefer change-from-baseline if reported.
+
+      - node_id: "locate_binary"
+        condition: "terminal"
+        branches:
+          - match: "always"
+            action: >
+              Extract: events and total N per arm, or reported OR/RR with 95%CI.
+              Source priority: (1) Results tables → (2) Abstract → (3) Text paragraphs.
+              Record exact numbers, not percentages alone.
+
+      - node_id: "locate_tte"
+        condition: "terminal"
+        branches:
+          - match: "always"
+            action: >
+              Extract: HR with 95%CI and p-value.
+              If HR not reported: extract event counts and person-time to enable calculation.
+              Source priority: (1) Survival analysis table → (2) Cox model results → (3) KM curves.
+
+      - node_id: "locate_rate"
+        condition: "terminal"
+        branches:
+          - match: "always"
+            action: >
+              Extract: event count and person-time per arm, or reported IRR with 95%CI.
+              Source priority: (1) Results table → (2) Poisson/NB model table.
+
+    location_reliability_rank:
+      - rank: 1
+        location_type: "results_table"
+        notes: "Most reliable; exact values with proper labeling"
+      - rank: 2
+        location_type: "abstract_results"
+        notes: "Reliable but may round values"
+      - rank: 3
+        location_type: "results_text"
+        notes: "Verify against table if discrepancy"
+      - rank: 4
+        location_type: "supplementary_table"
+        notes: "Valid but note supplementary source"
+      - rank: 5
+        location_type: "figure_data"
+        notes: "Only if digitized from figure; low confidence"
+
+    arm_matching_rules:
+      - "Match arm labels exactly to document_map arm_ids"
+      - "If multiple sub-groups exist, extract each separately"
+      - "For cross-over trials: extract period-specific data if available"
+
+output_schema:
+  format: "json"
+  schema:
+    type: object
+    required: ["extractions"]
+    properties:
+      extractions:
+        type: array
+        items:
+          endpoint_id: {type: string}
+          arm_id: {type: string}
+          timepoint_id: {type: string}
+          outcome_type: {type: string}
+          value_type: {type: string, enum: ["mean_sd", "mean_se", "mean_ci95", "events_n", "hr_ci95", "irr_ci95", "median_iqr", "raw_value"]}
+          values: {type: object, description: "Depends on value_type"}
+          location_id: {type: string, description: "e.g. 'Table_2', 'Abstract', 'Supplement_Table_1'"}
+          location_reliability_rank: {type: integer}
+          extraction_notes: {type: string}
+  example:
+    extractions:
+      - endpoint_id: "primary_1"
+        arm_id: "intervention"
+        timepoint_id: "T12w"
+        outcome_type: "continuous"
+        value_type: "mean_sd"
+        values:
+          mean: 128.5
+          sd: 12.3
+          n: 48
+        location_id: "Table_2"
+        location_reliability_rank: 1
+        extraction_notes: "Change from baseline reported; used post-intervention value"
+
+validation:
+  - rule_id: "location_id_required"
+    description: "Every extraction must have a source location"
+    expression: "all(e.get('location_id') for e in output.get('extractions', []))"
+    severity: hard
+    on_fail: retry
+
+  - rule_id: "values_not_empty"
+    description: "Values dict must not be empty"
+    expression: "all(e.get('values') for e in output.get('extractions', []))"
+    severity: hard
+    on_fail: retry
+
+bound_tools:
+  - tool_id: "semantic_locator"
+    usage: "Locate relevant sections and tables using semantic search"
+    required: true
+  - tool_id: "source_traceability_verifier"
+    usage: "Verify that extracted values exist at stated location"
+    required: false
+
+manifest:
+  purpose: "Locate and extract numeric data for each endpoint×arm×timepoint with source location"
+  key_constraints:
+    - "Extract from highest-reliability source (table > abstract > text)"
+    - "Record exact location ID for every extracted value"
+    - "Match arms precisely to document map arm_ids"
+    - "Prefer mean+SD over SE or CI for continuous outcomes"
+  output_type: "JSON array of extractions with values and location provenance"
